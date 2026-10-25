@@ -1,4 +1,4 @@
---Claude coded!
+
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
@@ -18,7 +18,9 @@ do
 	if old then old:Destroy() end
 end
 
-
+-- =====================================================
+-- THEME + CORE HELPERS
+-- =====================================================
 local WIN_W, WIN_H = 740, 480
 
 local BG = Color3.fromRGB(10, 12, 16)
@@ -131,12 +133,18 @@ local function getPing()
 	return ping
 end
 
-
+-- =====================================================
+-- SHARED STATE
+-- =====================================================
 local cfg = {
 	flySpeed = 60, walkSpeed = 50, jumpPower = 120, spinSpeed = 20, zoom = 520,
 	gravity = 196, time = 14, sprint = 2, dash = 90, glide = 12, fov = 70,
 	zoomFov = 30, freecam = 60, orbit = 20, bloom = 10, sat = 0, contrast = 0,
 	hue = 200, cycle = 30,
+	climb = 35, hip = 8, camX = 0, camY = 0, blink = 25, blur = 10, dof = 60, rays = 25,
+	exposure = 0, brightness = 20, fogDist = 400, disco = 20, snow = 300, rainRate = 600,
+	tintHue = 0, tintAlpha = 15, bars = 12, quality = 5, toastTime = 2,
+	size = 100, aura = 25, nameDist = 2000,
 }
 
 local S = {
@@ -147,8 +155,8 @@ local S = {
 
 local NORMAL_SPEED, NORMAL_JUMP = 16, 50
 
-local F = {}              
-local UI = {}             
+local F = {}              -- feature functions
+local UI = {}             -- gui references and gui functions
 local modules = {}
 local keyActions = {}
 local sliderSetters = {}
@@ -199,7 +207,7 @@ local function notify(text, good)
 	tween(wrap, { Size = UDim2.new(1, 0, 0, 44) }, TI.slow)
 	tween(toast, { Position = UDim2.new(0, 0, 0, 0) }, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out))
 
-	task.delay(2.4, function()
+	task.delay(cfg.toastTime, function()
 		if not wrap.Parent then return end
 		local t1 = tween(toast, { Position = UDim2.new(0, 290, 0, 0) }, TI.exit)
 		t1.Completed:Wait()
@@ -471,6 +479,7 @@ bind(UIS.InputBegan, function(input, processed)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 and UIS:IsKeyDown(Enum.KeyCode.T) then
 		local root = getRoot()
 		if root and mouse.Hit then
+			S.lastPos = root.CFrame
 			root.CFrame = CFrame.new(mouse.Hit.Position + Vector3.new(0, 3, 0))
 			log("teleported")
 		end
@@ -1276,6 +1285,7 @@ function F.tpTo(plr)
 	local root = getRoot()
 	local r = plr and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
 	if root and r then
+		S.lastPos = root.CFrame
 		root.CFrame = r.CFrame * CFrame.new(0, 0, 3)
 		notify("Teleported to " .. plr.Name)
 		log("teleported to " .. plr.Name)
@@ -1377,6 +1387,701 @@ bind(player.CharacterAdded, function(char)
 end)
 
 -- =====================================================
+-- EXTRA FEATURES
+-- =====================================================
+local StarterGui = game:GetService("StarterGui")
+local GuiService = game:GetService("GuiService")
+
+-- Hip height
+do
+	local orig
+	function F.hipHeight(on)
+		local hum = getHum()
+		if not hum then return end
+		if on then
+			if orig == nil then orig = hum.HipHeight end
+			hum.HipHeight = cfg.hip
+		elseif orig ~= nil then
+			hum.HipHeight = orig
+			orig = nil
+		end
+	end
+	function F.hipUpdate()
+		local hum = getHum()
+		if hum and orig ~= nil then hum.HipHeight = cfg.hip end
+	end
+end
+
+-- Camera offset
+do
+	local active = false
+	function F.camOffset(on)
+		active = on
+		local hum = getHum()
+		if hum then hum.CameraOffset = on and Vector3.new(cfg.camX, cfg.camY, 0) or Vector3.zero end
+	end
+	function F.camOffsetUpdate()
+		local hum = getHum()
+		if hum and active then hum.CameraOffset = Vector3.new(cfg.camX, cfg.camY, 0) end
+	end
+end
+
+-- Anti ragdoll
+do
+	local states = { Enum.HumanoidStateType.Ragdoll, Enum.HumanoidStateType.FallingDown }
+	function F.antiRagdoll(on)
+		local hum = getHum()
+		if not hum then return end
+		for _, st in ipairs(states) do
+			pcall(function() hum:SetStateEnabled(st, not on) end)
+		end
+	end
+end
+
+-- Wall climb (hold Space against a wall)
+do
+	local conn
+	function F.wallClimb(on)
+		if conn then conn:Disconnect() conn = nil end
+		if not on then return end
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		conn = RunService.Heartbeat:Connect(function()
+			local root = getRoot()
+			if not root or not player.Character then return end
+			if typing() or not UIS:IsKeyDown(Enum.KeyCode.Space) then return end
+			params.FilterDescendantsInstances = { player.Character }
+			local hit = workspace:Raycast(root.Position, root.CFrame.LookVector * 3, params)
+			if hit then
+				local v = root.AssemblyLinearVelocity
+				root.AssemblyLinearVelocity = Vector3.new(v.X, cfg.climb, v.Z)
+			end
+		end)
+	end
+end
+
+-- Blink forward
+do
+	local last = 0
+	function F.blink()
+		if os.clock() - last < 0.5 then return end
+		local root = getRoot()
+		if not root then return end
+		last = os.clock()
+		S.lastPos = root.CFrame
+		root.CFrame = root.CFrame + root.CFrame.LookVector * cfg.blink
+	end
+end
+
+-- Platforms (local only)
+do
+	local parts = {}
+	function F.platform()
+		local root = getRoot()
+		if not root then return end
+		local part = new("Part", {
+			Size = Vector3.new(14, 1, 14),
+			Anchored = true,
+			Material = Enum.Material.Neon,
+			Color = accent,
+			Transparency = 0.35,
+			CFrame = root.CFrame * CFrame.new(0, -3.5, 0),
+		}, workspace)
+		table.insert(parts, part)
+		notify("Platform placed")
+	end
+	function F.clearPlatforms()
+		for _, part in ipairs(parts) do part:Destroy() end
+		parts = {}
+		notify("Platforms removed")
+	end
+end
+
+function F.sit()
+	local hum = getHum()
+	if hum then hum.Sit = true end
+end
+
+function F.showPos()
+	local root = getRoot()
+	if root then
+		local p = root.Position
+		notify(string.format("XYZ %d, %d, %d", math.floor(p.X), math.floor(p.Y), math.floor(p.Z)))
+	end
+end
+
+-- Hide other players
+do
+	local conn
+	local function apply(v)
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr ~= player and plr.Character then
+				for _, part in ipairs(plr.Character:GetDescendants()) do
+					if part:IsA("BasePart") then
+						pcall(function() part.LocalTransparencyModifier = v end)
+					end
+				end
+			end
+		end
+	end
+	function F.hidePlayers(on)
+		if conn then conn:Disconnect() conn = nil end
+		if on then
+			local last = 0
+			conn = RunService.Heartbeat:Connect(function()
+				if os.clock() - last < 0.25 then return end
+				last = os.clock()
+				apply(1)
+			end)
+		else
+			apply(0)
+		end
+	end
+end
+
+-- Hide name tags
+do
+	local conn
+	local saved = {}
+	function F.hideNames(on)
+		if conn then conn:Disconnect() conn = nil end
+		if on then
+			local last = 0
+			conn = RunService.Heartbeat:Connect(function()
+				if os.clock() - last < 0.5 then return end
+				last = os.clock()
+				for _, plr in ipairs(Players:GetPlayers()) do
+					local h = plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
+					if h and h.DisplayDistanceType ~= Enum.HumanoidDisplayDistanceType.None then
+						saved[h] = h.DisplayDistanceType
+						h.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+					end
+				end
+			end)
+		else
+			for h, v in pairs(saved) do
+				pcall(function() h.DisplayDistanceType = v end)
+			end
+			saved = {}
+		end
+	end
+end
+
+-- Post effects
+do
+	local fx
+	function F.blur(on)
+		if fx then fx:Destroy() fx = nil end
+		if on then fx = new("BlurEffect", { Size = cfg.blur }, Lighting) end
+	end
+	function F.blurUpdate()
+		if fx then fx.Size = cfg.blur end
+	end
+end
+
+do
+	local fx
+	function F.dof(on)
+		if fx then fx:Destroy() fx = nil end
+		if on then
+			fx = new("DepthOfFieldEffect", {
+				FarIntensity = 0.6, NearIntensity = 0, InFocusRadius = 20, FocusDistance = cfg.dof,
+			}, Lighting)
+		end
+	end
+	function F.dofUpdate()
+		if fx then fx.FocusDistance = cfg.dof end
+	end
+end
+
+do
+	local fx
+	function F.sunRays(on)
+		if fx then fx:Destroy() fx = nil end
+		if on then fx = new("SunRaysEffect", { Intensity = cfg.rays / 100, Spread = 0.8 }, Lighting) end
+	end
+	function F.sunRaysUpdate()
+		if fx then fx.Intensity = cfg.rays / 100 end
+	end
+end
+
+-- Lighting property modules (restore on off)
+do
+	local function prop(name, valueFn)
+		local saved, active = nil, false
+		local function toggle(on)
+			active = on
+			if on then
+				saved = Lighting[name]
+				Lighting[name] = valueFn()
+			elseif saved ~= nil then
+				Lighting[name] = saved
+				saved = nil
+			end
+		end
+		local function update()
+			if active then Lighting[name] = valueFn() end
+		end
+		return toggle, update
+	end
+	F.exposure, F.exposureUpdate = prop("ExposureCompensation", function() return cfg.exposure / 10 end)
+	F.brightness, F.brightnessUpdate = prop("Brightness", function() return cfg.brightness / 10 end)
+	F.fogDist, F.fogDistUpdate = prop("FogEnd", function() return cfg.fogDist end)
+end
+
+-- No sky
+do
+	local saved = {}
+	function F.noSky(on)
+		if on then
+			for _, sky in ipairs(Lighting:GetChildren()) do
+				if sky:IsA("Sky") then
+					saved[sky] = sky.CelestialBodiesShown
+					sky.CelestialBodiesShown = false
+				end
+			end
+			local clouds = workspace.Terrain:FindFirstChildOfClass("Clouds")
+			if clouds then
+				saved[clouds] = clouds.Enabled
+				clouds.Enabled = false
+			end
+		else
+			for obj, v in pairs(saved) do
+				pcall(function()
+					if obj:IsA("Sky") then obj.CelestialBodiesShown = v else obj.Enabled = v end
+				end)
+			end
+			saved = {}
+		end
+	end
+end
+
+-- Disco lights
+do
+	local conn, hue, saved = nil, 0, nil
+	function F.disco(on)
+		if conn then conn:Disconnect() conn = nil end
+		if on then
+			saved = { Ambient = Lighting.Ambient, OutdoorAmbient = Lighting.OutdoorAmbient }
+			conn = RunService.Heartbeat:Connect(function(dt)
+				hue = (hue + dt * cfg.disco / 20) % 1
+				local c = Color3.fromHSV(hue, 0.8, 1)
+				Lighting.Ambient = c
+				Lighting.OutdoorAmbient = c
+			end)
+		elseif saved then
+			Lighting.Ambient = saved.Ambient
+			Lighting.OutdoorAmbient = saved.OutdoorAmbient
+			saved = nil
+		end
+	end
+end
+
+-- Weather (snow and rain follow your camera)
+do
+	local function makeWeather(rateKey, props)
+		local part, conn
+		return function(on)
+			if conn then conn:Disconnect() conn = nil end
+			if part then part:Destroy() part = nil end
+			if not on then return end
+			part = new("Part", {
+				Size = Vector3.new(90, 1, 90),
+				Anchored = true,
+				CanCollide = false,
+				CanQuery = false,
+				CanTouch = false,
+				Transparency = 1,
+			}, workspace)
+			local em = new("ParticleEmitter", {
+				Rate = cfg[rateKey],
+				Lifetime = NumberRange.new(props.life),
+				Speed = NumberRange.new(props.speed),
+				EmissionDirection = Enum.NormalId.Bottom,
+				SpreadAngle = Vector2.new(props.spread, props.spread),
+				Size = NumberSequence.new(props.size),
+				Color = ColorSequence.new(props.color),
+				Transparency = NumberSequence.new(props.transp),
+				LightEmission = props.light,
+				Acceleration = Vector3.new(0, -props.gravity, 0),
+				Orientation = props.orient or Enum.ParticleOrientation.FacingCamera,
+			}, part)
+			conn = RunService.Heartbeat:Connect(function()
+				local cam = workspace.CurrentCamera
+				if part and cam then
+					part.CFrame = CFrame.new(cam.CFrame.Position + Vector3.new(0, 35, 0))
+					em.Rate = cfg[rateKey]
+				end
+			end)
+		end
+	end
+	F.snow = makeWeather("snow", {
+		life = 3, speed = 8, spread = 20, size = 0.25, color = Color3.new(1, 1, 1),
+		transp = 0.2, light = 0.3, gravity = 4,
+	})
+	F.rainfall = makeWeather("rainRate", {
+		life = 1.2, speed = 60, spread = 3, size = 0.6, color = Color3.fromRGB(170, 200, 255),
+		transp = 0.45, light = 0.1, gravity = 40, orient = Enum.ParticleOrientation.VelocityParallel,
+	})
+end
+
+-- Graphics quality + no grass
+do
+	local orig
+	local function apply(on)
+		pcall(function()
+			local r = settings().Rendering
+			if on then
+				if orig == nil then orig = r.QualityLevel end
+				r.QualityLevel = Enum.QualityLevel["Level" .. string.format("%02d", cfg.quality)]
+			elseif orig ~= nil then
+				r.QualityLevel = orig
+				orig = nil
+			end
+		end)
+	end
+	function F.quality(on) apply(on) end
+	function F.qualityUpdate()
+		if orig ~= nil then apply(true) end
+	end
+end
+
+do
+	local orig
+	function F.noGrass(on)
+		local t = workspace.Terrain
+		if on then
+			orig = t.Decoration
+			t.Decoration = false
+		elseif orig ~= nil then
+			t.Decoration = orig
+			orig = nil
+		end
+	end
+end
+
+-- Auto rejoin when disconnected
+do
+	local conn
+	function F.autoRejoin(on)
+		if conn then conn:Disconnect() conn = nil end
+		if on then
+			conn = GuiService.ErrorMessageChanged:Connect(function()
+				if unloaded then return end
+				task.wait(1)
+				pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+			end)
+		end
+	end
+end
+
+-- Hide parts of the default Roblox UI
+function F.coreGui(kind)
+	return function(on)
+		pcall(function() StarterGui:SetCoreGuiEnabled(kind, not on) end)
+	end
+end
+
+-- Spectate next / previous
+do
+	local idx = 0
+	function F.spectateStep(dir)
+		local list = {}
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr ~= player and plr.Character then table.insert(list, plr) end
+		end
+		if #list == 0 then
+			notify("No players found", false)
+			return
+		end
+		idx = ((idx - 1 + dir) % #list) + 1
+		F.spectate(list[idx])
+	end
+end
+
+-- Panic: turn every module off
+function F.panic()
+	for _, m in ipairs(modules) do
+		if m.on and not m.def.keep and not m.def.noHud then setModule(m, false, true) end
+	end
+	notify("Everything turned off")
+end
+
+-- =====================================================
+-- MORE FEATURES
+-- =====================================================
+
+-- Attach to a player (head sit, piggyback, front, orbit, above)
+do
+	local conn, mode, angle = nil, "Head", 0
+	F.attachModes = { "Head", "Back", "Front", "Orbit", "Above" }
+
+	function F.setAttachMode(m) mode = m end
+	function F.getAttachMode() return mode end
+
+	function F.attach(plr)
+		if conn then conn:Disconnect() conn = nil end
+		S.attachTarget = plr
+		if not plr then
+			local hum = getHum()
+			if hum then hum.Sit = false end
+			return
+		end
+		conn = RunService.Heartbeat:Connect(function(dt)
+			local root, hum = getRoot(), getHum()
+			local tc = plr.Character
+			local tr = tc and tc:FindFirstChild("HumanoidRootPart")
+			local th = tc and tc:FindFirstChild("Head")
+			if not root or not tr then return end
+
+			local cf
+			if mode == "Head" then
+				cf = (th or tr).CFrame * CFrame.new(0, 2.2, 0)
+			elseif mode == "Back" then
+				cf = tr.CFrame * CFrame.new(0, 0.4, 1.2)
+			elseif mode == "Front" then
+				local pos = (tr.CFrame * CFrame.new(0, 0, -4)).Position
+				cf = CFrame.lookAt(pos, tr.Position)
+			elseif mode == "Orbit" then
+				angle += dt * 2.5
+				local pos = tr.Position + Vector3.new(math.cos(angle) * 7, 1, math.sin(angle) * 7)
+				cf = CFrame.lookAt(pos, tr.Position)
+			else
+				cf = tr.CFrame * CFrame.new(0, 10, 0)
+			end
+
+			root.CFrame = cf
+			root.AssemblyLinearVelocity = Vector3.zero
+			if hum and (mode == "Head" or mode == "Back") then hum.Sit = true end
+		end)
+	end
+end
+
+-- Camera goes through walls
+do
+	local orig
+	function F.camThrough(on)
+		if on then
+			if orig == nil then orig = player.DevCameraOcclusionMode end
+			player.DevCameraOcclusionMode = Enum.DevCameraOcclusionMode.Invisicam
+		elseif orig ~= nil then
+			player.DevCameraOcclusionMode = orig
+			orig = nil
+		end
+	end
+end
+
+-- Allow zooming all the way in
+do
+	local orig
+	function F.closeZoom(on)
+		if on then
+			if orig == nil then orig = player.CameraMinZoomDistance end
+			player.CameraMinZoomDistance = 0.5
+		elseif orig ~= nil then
+			player.CameraMinZoomDistance = orig
+			orig = nil
+		end
+	end
+end
+
+-- Auto walk
+do
+	local NAME = "NexusAutoWalk"
+	local bound = false
+	function F.autoWalk(on)
+		if bound then
+			RunService:UnbindFromRenderStep(NAME)
+			bound = false
+		end
+		if on then
+			RunService:BindToRenderStep(NAME, Enum.RenderPriority.Character.Value + 5, function()
+				local hum = getHum()
+				if hum and not typing() and not S.flyOn and not S.freecam then
+					hum:Move(Vector3.new(0, 0, -1), true)
+				end
+			end)
+			bound = true
+		end
+	end
+end
+
+-- Auto jump
+do
+	local conn
+	function F.autoJump(on)
+		if conn then conn:Disconnect() conn = nil end
+		if on then
+			conn = RunService.Heartbeat:Connect(function()
+				local hum = getHum()
+				if hum and hum.MoveDirection.Magnitude > 0 and hum.FloorMaterial ~= Enum.Material.Air then
+					hum:ChangeState(Enum.HumanoidStateType.Jumping)
+				end
+			end)
+		end
+	end
+end
+
+-- Freeze yourself in place
+function F.freezeMe(on)
+	local root = getRoot()
+	if root then root.Anchored = on end
+end
+
+-- Character size (R15, only you see it)
+do
+	local names = { "BodyHeightScale", "BodyWidthScale", "BodyDepthScale", "HeadScale" }
+	local saved = {}
+	local active = false
+
+	local function apply(v)
+		local hum = getHum()
+		if not hum then return end
+		for _, n in ipairs(names) do
+			local val = hum:FindFirstChild(n)
+			if val and val:IsA("NumberValue") then
+				if saved[n] == nil then saved[n] = val.Value end
+				val.Value = v
+			end
+		end
+	end
+
+	function F.charSize(on)
+		active = on
+		if on then
+			apply(cfg.size / 100)
+		else
+			local hum = getHum()
+			if hum then
+				for n, v in pairs(saved) do
+					local val = hum:FindFirstChild(n)
+					if val then val.Value = v end
+				end
+			end
+			saved = {}
+		end
+	end
+
+	function F.charSizeUpdate()
+		if active then apply(cfg.size / 100) end
+	end
+end
+
+-- Light aura
+do
+	local light
+	function F.aura(on)
+		if light then light:Destroy() light = nil end
+		local root = getRoot()
+		if on and root then
+			light = new("PointLight", { Color = accent, Brightness = 4, Range = cfg.aura }, root)
+		end
+	end
+	function F.auraUpdate()
+		if light then light.Range = cfg.aura end
+	end
+end
+
+-- Trail
+do
+	local trail, a0, a1
+	function F.trail(on)
+		if trail then trail:Destroy() trail = nil end
+		if a0 then a0:Destroy() a0 = nil end
+		if a1 then a1:Destroy() a1 = nil end
+		local root = getRoot()
+		if on and root then
+			a0 = new("Attachment", { Position = Vector3.new(0, 1, 0) }, root)
+			a1 = new("Attachment", { Position = Vector3.new(0, -1, 0) }, root)
+			trail = new("Trail", {
+				Attachment0 = a0,
+				Attachment1 = a1,
+				Lifetime = 1,
+				LightEmission = 1,
+				FaceCamera = true,
+				Color = ColorSequence.new(accent, Color3.new(1, 1, 1)),
+				Transparency = NumberSequence.new(0.1, 1),
+			}, root)
+		end
+	end
+end
+
+-- Night vision
+do
+	local fx
+	function F.nightVision(on)
+		if fx then fx:Destroy() fx = nil end
+		if on then
+			fx = new("ColorCorrectionEffect", {
+				TintColor = Color3.fromRGB(120, 255, 120),
+				Brightness = 0.25,
+				Contrast = 0.2,
+				Saturation = -0.3,
+			}, Lighting)
+		end
+	end
+end
+
+-- Go back to where you were before the last teleport
+function F.goBack()
+	local root = getRoot()
+	if root and S.lastPos then
+		local cur = root.CFrame
+		root.CFrame = S.lastPos
+		S.lastPos = cur
+		notify("Went back")
+	else
+		notify("No previous position", false)
+	end
+end
+
+-- Far name tags (raises how far away Roblox shows names and health)
+do
+	local conn
+	local saved = {}
+
+	local function apply()
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr ~= player then
+				local h = plr.Character and plr.Character:FindFirstChildOfClass("Humanoid")
+				if h then
+					if saved[h] == nil then
+						saved[h] = { h.NameDisplayDistance, h.HealthDisplayDistance }
+					end
+					h.NameDisplayDistance = cfg.nameDist
+					h.HealthDisplayDistance = cfg.nameDist
+				end
+			end
+		end
+	end
+
+	function F.farNames(on)
+		if conn then conn:Disconnect() conn = nil end
+		if on then
+			apply()
+			local last = 0
+			conn = RunService.Heartbeat:Connect(function()
+				if os.clock() - last < 0.5 then return end
+				last = os.clock()
+				apply()
+			end)
+		else
+			for h, v in pairs(saved) do
+				pcall(function()
+					h.NameDisplayDistance = v[1]
+					h.HealthDisplayDistance = v[2]
+				end)
+			end
+			saved = {}
+		end
+	end
+
+	function F.farNamesUpdate()
+		if conn then apply() end
+	end
+end
+
+-- =====================================================
 -- GUI: ROOT + OVERLAYS
 -- =====================================================
 UI.gui = new("ScreenGui", {
@@ -1385,6 +2090,201 @@ UI.gui = new("ScreenGui", {
 	IgnoreGuiInset = true,
 	DisplayOrder = 50,
 }, playerGui)
+
+-- Draggable HUD elements (with a global lock)
+UI.locked = false
+UI.lastDragMove = 0
+do
+	local items = {}
+	local drag
+
+	function UI.makeDraggable(obj, grip)
+		grip = grip or obj
+		local item = { obj = obj, base = obj.Position, cur = Vector2.zero, target = Vector2.zero }
+		table.insert(items, item)
+
+		local stroke = new("UIStroke", {
+			Thickness = 1.5,
+			Transparency = 1,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		}, grip)
+		reg(stroke, "Color")
+
+		grip.MouseEnter:Connect(function()
+			if not UI.locked then tween(stroke, { Transparency = 0.2 }, TI.fast) end
+		end)
+		grip.MouseLeave:Connect(function()
+			tween(stroke, { Transparency = 1 }, TI.fast)
+		end)
+		grip.InputBegan:Connect(function(input)
+			if UI.locked or not isPress(input) then return end
+			drag = {
+				item = item,
+				start = Vector2.new(input.Position.X, input.Position.Y),
+				base = item.target,
+				moved = false,
+			}
+		end)
+		return item
+	end
+
+	bind(UIS.InputChanged, function(input)
+		if not drag then return end
+		if input.UserInputType ~= Enum.UserInputType.MouseMovement
+			and input.UserInputType ~= Enum.UserInputType.Touch then return end
+		local delta = Vector2.new(input.Position.X, input.Position.Y) - drag.start
+		if delta.Magnitude > 4 then drag.moved = true end
+		if drag.moved then
+			drag.item.target = drag.base + delta
+			UI.lastDragMove = os.clock()
+		end
+	end)
+
+	bind(UIS.InputEnded, function(input)
+		if isPress(input) then drag = nil end
+	end)
+
+	bind(RunService.RenderStepped, function(dt)
+		local a = 1 - math.exp(-dt * 16)
+		for _, it in ipairs(items) do
+			if it.obj.Parent then
+				it.cur = it.cur:Lerp(it.target, a)
+				if (it.target - it.cur).Magnitude < 0.05 then it.cur = it.target end
+				it.obj.Position = UDim2.new(
+					it.base.X.Scale, it.base.X.Offset + it.cur.X,
+					it.base.Y.Scale, it.base.Y.Offset + it.cur.Y)
+			end
+		end
+	end)
+
+	function UI.resetLayout()
+		for _, it in ipairs(items) do it.target = Vector2.zero end
+	end
+
+	function UI.updateHandles()
+		if UI.toastHandle then UI.toastHandle.Visible = UI.menuOpen and not UI.locked end
+	end
+end
+
+-- Screen tint
+do
+	local frame = new("Frame", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		Visible = false,
+	}, UI.gui)
+	local active = false
+	local function apply()
+		frame.BackgroundColor3 = Color3.fromHSV(cfg.tintHue / 360, 0.7, 1)
+		frame.BackgroundTransparency = 1 - cfg.tintAlpha / 100
+	end
+	function F.screenTint(on)
+		active = on
+		frame.Visible = on
+		if on then apply() end
+	end
+	function F.tintUpdate()
+		if active then apply() end
+	end
+end
+
+-- Cinematic bars
+do
+	local top = new("Frame", {
+		Size = UDim2.new(1, 0, 0, 0),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BorderSizePixel = 0,
+	}, UI.gui)
+	local bottom = new("Frame", {
+		Size = UDim2.new(1, 0, 0, 0),
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 0, 1, 0),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BorderSizePixel = 0,
+	}, UI.gui)
+	local active = false
+	local function apply()
+		local size = active and UDim2.new(1, 0, cfg.bars / 100, 0) or UDim2.new(1, 0, 0, 0)
+		tween(top, { Size = size }, TI.quint)
+		tween(bottom, { Size = size }, TI.quint)
+	end
+	function F.bars(on)
+		active = on
+		apply()
+	end
+	function F.barsUpdate()
+		if active then apply() end
+	end
+end
+
+-- Compass
+do
+	local label = new("TextLabel", {
+		Size = UDim2.new(0, 160, 0, 24),
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 46),
+		BackgroundColor3 = PANEL,
+		BackgroundTransparency = 0.15,
+		Font = Enum.Font.Code,
+		TextSize = 14,
+		Text = "",
+		Visible = false,
+	}, UI.gui)
+	corner(label, 6)
+	reg(label, "TextColor3")
+	local names = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" }
+	UI.makeDraggable(label)
+	local conn
+	function F.compass(on)
+		if conn then conn:Disconnect() conn = nil end
+		label.Visible = on
+		if on then
+			conn = RunService.RenderStepped:Connect(function()
+				local cam = workspace.CurrentCamera
+				if not cam then return end
+				local look = cam.CFrame.LookVector
+				local deg = math.deg(math.atan2(look.X, -look.Z)) % 360
+				local idx = math.floor((deg + 22.5) / 45) % 8 + 1
+				label.Text = string.format("%s  %d deg", names[idx], math.floor(deg))
+			end)
+		end
+	end
+end
+
+-- Clock HUD
+do
+	local label = new("TextLabel", {
+		Size = UDim2.new(0, 230, 0, 24),
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, 0, 1, -12),
+		BackgroundColor3 = PANEL,
+		BackgroundTransparency = 0.15,
+		Font = Enum.Font.Code,
+		TextSize = 13,
+		Text = "",
+		Visible = false,
+	}, UI.gui)
+	corner(label, 6)
+	reg(label, "TextColor3")
+	local started = os.clock()
+	UI.makeDraggable(label)
+	local conn
+	function F.clockHud(on)
+		if conn then conn:Disconnect() conn = nil end
+		label.Visible = on
+		if on then
+			local last = 0
+			conn = RunService.Heartbeat:Connect(function()
+				if os.clock() - last < 0.5 then return end
+				last = os.clock()
+				local sec = math.floor(os.clock() - started)
+				label.Text = string.format("%s   session %02d:%02d", os.date("%H:%M:%S"),
+					math.floor(sec / 60), sec % 60)
+			end)
+		end
+	end
+end
 
 -- Matrix rain
 do
@@ -1477,6 +2377,18 @@ new("UIListLayout", {
 	SortOrder = Enum.SortOrder.LayoutOrder,
 	HorizontalAlignment = Enum.HorizontalAlignment.Right,
 }, UI.hud)
+UI.hudMark = new("TextLabel", {
+	Size = UDim2.new(1, 0, 0, 18),
+	BackgroundTransparency = 1,
+	Text = "NEXUS v7 ",
+	Font = Enum.Font.Code,
+	TextSize = 15,
+	TextStrokeTransparency = 0.5,
+	TextXAlignment = Enum.TextXAlignment.Right,
+	LayoutOrder = -100000,
+}, UI.hud)
+reg(UI.hudMark, "TextColor3")
+UI.makeDraggable(UI.hud)
 
 -- Notifications (bottom right)
 UI.toasts = new("Frame", {
@@ -1491,6 +2403,18 @@ new("UIListLayout", {
 	VerticalAlignment = Enum.VerticalAlignment.Bottom,
 	HorizontalAlignment = Enum.HorizontalAlignment.Right,
 }, UI.toasts)
+UI.toastHandle = new("TextLabel", {
+	Size = UDim2.new(1, 0, 0, 26),
+	BackgroundColor3 = PANEL,
+	Text = "[ notifications - drag me ]",
+	TextColor3 = SUB,
+	Font = Enum.Font.Code,
+	TextSize = 12,
+	LayoutOrder = -1000000,
+	Visible = false,
+}, UI.toasts)
+corner(UI.toastHandle, 6)
+UI.makeDraggable(UI.toasts, UI.toastHandle)
 
 -- FPS counter
 UI.currentFps = 0
@@ -1506,6 +2430,8 @@ do
 	}, UI.gui)
 	corner(label, 6)
 	reg(label, "TextColor3")
+
+	UI.makeDraggable(label)
 
 	local frames, last = 0, os.clock()
 	bind(RunService.RenderStepped, function()
@@ -1540,6 +2466,7 @@ do
 	corner(label, 8)
 	reg(label, "TextColor3")
 	new("UIPadding", { PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 10) }, label)
+	UI.makeDraggable(label)
 
 	local conn
 	function F.infoHud(on)
@@ -1577,6 +2504,8 @@ do
 	corner(label, 6)
 	reg(label, "TextColor3")
 
+	UI.makeDraggable(label)
+
 	local conn
 	function F.inspector(on)
 		if conn then conn:Disconnect() conn = nil end
@@ -1608,6 +2537,7 @@ reg(UI.openBtn, "TextColor3")
 reg(new("UIStroke", { Thickness = 1 }, UI.openBtn), "Color")
 hover(UI.openBtn, PANEL, HOVER)
 pressFx(UI.openBtn)
+UI.makeDraggable(UI.openBtn)
 
 -- =====================================================
 -- GUI: MAIN WINDOW
@@ -1619,6 +2549,8 @@ UI.tabNames = {
 UI.pages = {}
 UI.currentTab = "Movement"
 UI.menuOpen = false
+UI.menuKey = Enum.KeyCode.RightShift
+UI.baseTransp = 0
 UI.uiBase = 1
 UI.autoBase = 1
 UI.overConsole = false
@@ -1681,7 +2613,7 @@ do
 		Font = Enum.Font.Code,
 		TextSize = 12,
 		TextColor3 = SUB,
-		Text = "v5.0  |  injected",
+		Text = "v7.0  |  injected",
 		TextXAlignment = Enum.TextXAlignment.Left,
 	}, titleBar)
 
@@ -1881,12 +2813,126 @@ do
 		end)
 	end
 
+	-- keep the mouse wheel from zooming the game camera while it is over the menu
+	do
+		local CAS = game:GetService("ContextActionService")
+		local savedMin, savedMax, lockedDist, releaseAt
+
+		local function overWindow()
+			if not window.Visible then return false end
+			local m = UIS:GetMouseLocation()
+			local p, sz = window.AbsolutePosition, window.AbsoluteSize
+			return m.X >= p.X and m.X <= p.X + sz.X and m.Y >= p.Y and m.Y <= p.Y + sz.Y
+		end
+
+		-- layer 1: swallow the wheel before the camera sees it
+		CAS:BindActionAtPriority("NexusWheel", function()
+			if overWindow() then return Enum.ContextActionResult.Sink end
+			return Enum.ContextActionResult.Pass
+		end, false, Enum.ContextActionPriority.High.Value, Enum.UserInputType.MouseWheel)
+
+		-- layer 2: briefly freeze the zoom distance in case the camera still reacts
+		local function release()
+			if savedMin ~= nil then
+				pcall(function()
+					if player.CameraMaxZoomDistance == lockedDist then player.CameraMaxZoomDistance = savedMax end
+					if player.CameraMinZoomDistance == lockedDist then player.CameraMinZoomDistance = savedMin end
+				end)
+			end
+			savedMin, savedMax, lockedDist, releaseAt = nil, nil, nil, nil
+		end
+
+		function UI.blockZoom()
+			local cam = workspace.CurrentCamera
+			if not cam then return end
+			if savedMin == nil then
+				savedMin, savedMax = player.CameraMinZoomDistance, player.CameraMaxZoomDistance
+				lockedDist = math.clamp((cam.CFrame.Position - cam.Focus.Position).Magnitude, savedMin, savedMax)
+				pcall(function()
+					player.CameraMinZoomDistance = lockedDist
+					player.CameraMaxZoomDistance = lockedDist
+				end)
+			end
+			releaseAt = os.clock() + 0.25
+		end
+
+		bind(UIS.InputChanged, function(input)
+			if input.UserInputType == Enum.UserInputType.MouseWheel and overWindow() then
+				UI.blockZoom()
+			end
+		end)
+
+		bind(RunService.Heartbeat, function()
+			if releaseAt and os.clock() > releaseAt then release() end
+		end)
+
+		function UI.unbindWheel()
+			release()
+			CAS:UnbindAction("NexusWheel")
+		end
+	end
+
 	-- dragging (the window glides toward the cursor)
 	local target, cur = Vector2.zero, Vector2.zero
 	local drag, lift = nil, 0
+	UI.minimized = false
 
+	function UI.resetPos()
+		if UI.minimized and UI.setMinimized then UI.setMinimized(false) end
+		target = Vector2.zero
+	end
+
+	local minBtn = new("TextButton", {
+		Size = UDim2.new(0, 28, 0, 28),
+		Position = UDim2.new(1, -72, 0, 6),
+		BackgroundColor3 = CARD,
+		TextColor3 = TEXT,
+		Font = Enum.Font.GothamBold,
+		TextSize = 18,
+		Text = "-",
+		AutoButtonColor = false,
+	}, titleBar)
+	corner(minBtn, 6)
+	hover(minBtn, CARD, HOVER)
+	pressFx(minBtn)
+
+	function UI.setMinimized(on)
+		if UI.minimized == on then return end
+		UI.minimized = on
+		local h = on and 40 or WIN_H
+		local shift = (WIN_H - 40) / 2 * UI.uiBase
+		target = target + Vector2.new(0, on and -shift or shift)
+		tween(window, { Size = UDim2.new(0, WIN_W, 0, h) }, TI.quint)
+		tween(shadow, { Size = UDim2.new(0, WIN_W + 40, 0, h + 40) }, TI.quint)
+		minBtn.Text = on and "+" or "-"
+		if on then
+			sidebar.Visible = false
+			content.Visible = false
+			footer.Visible = false
+		else
+			task.delay(0.22, function()
+				if not UI.minimized then
+					sidebar.Visible = true
+					content.Visible = true
+					footer.Visible = true
+				end
+			end)
+		end
+	end
+
+	minBtn.MouseButton1Click:Connect(function() UI.setMinimized(not UI.minimized) end)
+
+	-- double click the title bar to minimize or restore
+	local lastTitleClick = 0
 	titleBar.InputBegan:Connect(function(input)
 		if isPress(input) then
+			if os.clock() - lastTitleClick < 0.3 then UI.setMinimized(not UI.minimized) end
+			lastTitleClick = os.clock()
+		end
+	end)
+
+	titleBar.InputBegan:Connect(function(input)
+		if isPress(input) and not UI.locked then
 			drag = { start = Vector2.new(input.Position.X, input.Position.Y), base = target }
 		end
 	end)
@@ -1925,6 +2971,7 @@ do
 	local token = 0
 	function UI.showMenu(on)
 		UI.menuOpen = on
+		UI.updateHandles()
 		token += 1
 		local my = token
 		if on then
@@ -1932,7 +2979,7 @@ do
 			shadow.Visible = true
 			uiScale.Scale = UI.uiBase * 0.92
 			tween(uiScale, { Scale = UI.uiBase }, TI.back)
-			tween(window, { GroupTransparency = 0 }, TI.slow)
+			tween(window, { GroupTransparency = UI.baseTransp }, TI.slow)
 			tween(shadow, { BackgroundTransparency = 0.6 }, TI.slow)
 		else
 			local t = tween(window, { GroupTransparency = 1 }, TI.exit)
@@ -1951,7 +2998,10 @@ do
 		if UI.menuOpen then tween(uiScale, { Scale = UI.uiBase }) end
 	end
 
-	UI.openBtn.MouseButton1Click:Connect(function() UI.showMenu(not UI.menuOpen) end)
+	UI.openBtn.MouseButton1Click:Connect(function()
+		if os.clock() - UI.lastDragMove < 0.25 then return end
+		UI.showMenu(not UI.menuOpen)
+	end)
 	closeBtn.MouseButton1Click:Connect(function() UI.showMenu(false) end)
 end
 
@@ -2455,6 +3505,7 @@ do
 	wideBtn("Reset Camera", function()
 		F.spectate(nil)
 		F.setFollow(nil)
+		F.attach(nil)
 		if UI.rebuildPlayers then UI.rebuildPlayers() end
 		notify("Camera and follow reset")
 	end)
@@ -2476,7 +3527,7 @@ do
 					LayoutOrder = nextOrder(),
 				}, listCard)
 				new("TextLabel", {
-					Size = UDim2.new(1, -208, 1, 0),
+					Size = UDim2.new(1, -274, 1, 0),
 					BackgroundTransparency = 1,
 					Text = plr.DisplayName .. " (@" .. plr.Name .. ")",
 					TextColor3 = TEXT,
@@ -2485,9 +3536,20 @@ do
 					TextXAlignment = Enum.TextXAlignment.Left,
 					TextTruncate = Enum.TextTruncate.AtEnd,
 				}, r)
-				local tpB = smallBtn(r, "TP", UDim2.new(1, -198, 0.5, -14))
-				local viewB = smallBtn(r, "View", UDim2.new(1, -132, 0.5, -14))
-				local folB = smallBtn(r, S.followTarget == plr and "Stop" or "Follow", UDim2.new(1, -66, 0.5, -14))
+				local tpB = smallBtn(r, "TP", UDim2.new(1, -264, 0.5, -14))
+				local viewB = smallBtn(r, "View", UDim2.new(1, -198, 0.5, -14))
+				local folB = smallBtn(r, S.followTarget == plr and "Stop" or "Follow", UDim2.new(1, -132, 0.5, -14))
+				local attB = smallBtn(r, S.attachTarget == plr and "Detach" or "Attach", UDim2.new(1, -66, 0.5, -14))
+				attB.MouseButton1Click:Connect(function()
+					if S.attachTarget == plr then
+						F.attach(nil)
+						notify("Detached")
+					else
+						F.attach(plr)
+						notify(F.getAttachMode() .. " attach: " .. plr.Name)
+					end
+					UI.rebuildPlayers()
+				end)
 				tpB.MouseButton1Click:Connect(function() F.tpTo(plr) end)
 				viewB.MouseButton1Click:Connect(function() F.spectate(plr) end)
 				folB.MouseButton1Click:Connect(function()
@@ -2519,6 +3581,7 @@ do
 	bind(Players.PlayerAdded, function() task.wait(0.5) UI.rebuildPlayers() end)
 	bind(Players.PlayerRemoving, function(plr)
 		if S.followTarget == plr then F.setFollow(nil) end
+		if S.attachTarget == plr then F.attach(nil) end
 		task.defer(UI.rebuildPlayers)
 	end)
 	UI.rebuildPlayers()
@@ -2628,7 +3691,7 @@ end
 -- MENU CONTENT: MISC
 -- =====================================================
 do
-	addModule("Misc", { name = "Anti AFK", desc = "Stops the idle kick after 20 minutes", default = true, onToggle = function(on) S.afk = on end })
+	addModule("Misc", { name = "Anti AFK", desc = "Stops the idle kick after 20 minutes", default = true, keep = true, onToggle = function(on) S.afk = on end })
 	addModule("Misc", { name = "Ghost Mode", desc = "Hides your own character on your screen", onToggle = F.ghost })
 	addModule("Misc", { name = "Rainbow Skin", desc = "Your character cycles through colors (local)", onToggle = F.rainbowSkin })
 	addModule("Misc", { name = "Info HUD", desc = "Coordinates, speed, ping and FPS on screen", onToggle = F.infoHud })
@@ -2768,17 +3831,416 @@ do
 		LayoutOrder = nextOrder(),
 	}, help)
 
+	do
+		local moreColors = {
+			Color3.fromRGB(255, 255, 255), Color3.fromRGB(255, 220, 60), Color3.fromRGB(255, 120, 200),
+			Color3.fromRGB(120, 255, 60), Color3.fromRGB(255, 90, 30), Color3.fromRGB(110, 110, 255),
+		}
+		local card2 = makeCard("Settings")
+		makeTitle(card2, "More colors")
+		local row2 = new("Frame", {
+			Size = UDim2.new(1, 0, 0, 34),
+			BackgroundTransparency = 1,
+			LayoutOrder = nextOrder(),
+		}, card2)
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8) }, row2)
+		for _, c in ipairs(moreColors) do
+			local b = new("TextButton", {
+				Size = UDim2.new(0, 30, 0, 30), BackgroundColor3 = c, Text = "", AutoButtonColor = false,
+			}, row2)
+			corner(b, 15)
+			b.MouseEnter:Connect(function() tween(b, { Size = UDim2.new(0, 34, 0, 34) }, TI.fast) end)
+			b.MouseLeave:Connect(function() tween(b, { Size = UDim2.new(0, 30, 0, 30) }, TI.fast) end)
+			b.MouseButton1Click:Connect(function()
+				setAccent(c)
+				log("accent color changed")
+			end)
+		end
+
+		local r = math.floor(accent.R * 255 + 0.5)
+		local g = math.floor(accent.G * 255 + 0.5)
+		local bl = math.floor(accent.B * 255 + 0.5)
+		addSliderCard("Settings", "Accent red", 0, 255, r, function(v) r = v setAccent(Color3.fromRGB(r, g, bl), true) end)
+		addSliderCard("Settings", "Accent green", 0, 255, g, function(v) g = v setAccent(Color3.fromRGB(r, g, bl), true) end)
+		addSliderCard("Settings", "Accent blue", 0, 255, bl, function(v) bl = v setAccent(Color3.fromRGB(r, g, bl), true) end)
+
+		addSliderCard("Settings", "Menu opacity", 50, 100, 100, function(v)
+			UI.baseTransp = 1 - v / 100
+			if UI.menuOpen and UI.window then
+				tween(UI.window, { GroupTransparency = UI.baseTransp }, TI.fast)
+			end
+		end)
+		addSliderCard("Settings", "Toast seconds", 1, 8, 2, function(v) cfg.toastTime = v end)
+
+		local keys = {
+			Enum.KeyCode.RightShift, Enum.KeyCode.Insert, Enum.KeyCode.RightControl,
+			Enum.KeyCode.Home, Enum.KeyCode.Delete,
+		}
+		local idx = 1
+		local keyBtn
+		keyBtn = addButton("Settings", "Menu key: RightShift (click to change)", function()
+			idx = idx % #keys + 1
+			UI.menuKey = keys[idx]
+			keyBtn.Text = "Menu key: " .. keys[idx].Name .. " (click to change)"
+			notify("Menu key is now " .. keys[idx].Name)
+		end)
+
+		addButton("Settings", "Reset window position", function()
+			UI.resetPos()
+			notify("Window position reset")
+		end)
+		addButton("Settings", "Panic: turn everything off", F.panic, Enum.KeyCode.End)
+	end
+
+	addModule("Settings", {
+		name = "Lock GUI Positions", desc = "Stops the window and HUD elements from being dragged",
+		noHud = true,
+		onToggle = function(on)
+			UI.locked = on
+			UI.updateHandles()
+		end,
+	})
+	addButton("Settings", "Reset all GUI positions", function()
+		UI.resetLayout()
+		UI.resetPos()
+		notify("GUI positions reset")
+	end)
+
 	addButton("Settings", "Unload Client", function()
 		unloaded = true
 		for _, m in ipairs(modules) do
 			if m.on then pcall(m.def.onToggle, false) end
 		end
 		F.setFollow(nil)
+		F.attach(nil)
 		F.spectate(nil)
+		if UI.unbindWheel then UI.unbindWheel() end
 		for _, c in ipairs(globalConns) do c:Disconnect() end
 		UI.gui:Destroy()
 	end)
 end
+
+-- =====================================================
+-- MENU CONTENT: EXTRAS
+-- =====================================================
+do
+	-- Movement
+	addModule("Movement", {
+		name = "Wall Climb", desc = "Hold Space against a wall to climb it",
+		onToggle = F.wallClimb,
+		sliders = { { label = "Climb speed", min = 10, max = 100, default = 35,
+			onChange = function(v) cfg.climb = v end } },
+	})
+	addModule("Movement", {
+		name = "Hip Height", desc = "Make your character taller or shorter",
+		onToggle = F.hipHeight,
+		sliders = { { label = "Hip height", min = 0, max = 30, default = 8,
+			onChange = function(v) cfg.hip = v F.hipUpdate() end } },
+	})
+	addModule("Movement", {
+		name = "Camera Offset", desc = "Shift where the camera sits",
+		onToggle = F.camOffset,
+		sliders = {
+			{ label = "Camera X", min = -10, max = 10, default = 0,
+				onChange = function(v) cfg.camX = v F.camOffsetUpdate() end },
+			{ label = "Camera Y", min = -10, max = 10, default = 0,
+				onChange = function(v) cfg.camY = v F.camOffsetUpdate() end },
+		},
+	})
+	addModule("Movement", { name = "Anti Ragdoll", desc = "Stops you from being knocked down", onToggle = F.antiRagdoll })
+	addButton("Movement", "Blink Forward", F.blink, Enum.KeyCode.Period)
+	addSliderCard("Movement", "Blink distance", 5, 100, 25, function(v) cfg.blink = v end)
+	addButton("Movement", "Place Platform (local)", F.platform)
+	addButton("Movement", "Remove Platforms", F.clearPlatforms)
+	addButton("Movement", "Sit Down", F.sit)
+	addButton("Movement", "Show My Position", F.showPos)
+
+	-- Visuals
+	addModule("Visuals", { name = "Hide Players", desc = "Makes every other player invisible to you", onToggle = F.hidePlayers })
+	addModule("Visuals", { name = "Hide Name Tags", desc = "Removes the names above heads", onToggle = F.hideNames })
+	addModule("Visuals", { name = "Compass", desc = "Shows which way you are facing", onToggle = F.compass })
+	addModule("Visuals", {
+		name = "Screen Tint", desc = "Colors your whole screen",
+		onToggle = F.screenTint,
+		sliders = {
+			{ label = "Tint color", min = 0, max = 360, default = 0,
+				onChange = function(v) cfg.tintHue = v F.tintUpdate() end },
+			{ label = "Tint strength", min = 0, max = 60, default = 15,
+				onChange = function(v) cfg.tintAlpha = v F.tintUpdate() end },
+		},
+	})
+	addModule("Visuals", {
+		name = "Cinematic Bars", desc = "Black bars on the top and bottom",
+		onToggle = F.bars,
+		sliders = { { label = "Bar size", min = 5, max = 30, default = 12,
+			onChange = function(v) cfg.bars = v F.barsUpdate() end } },
+	})
+	addModule("Visuals", {
+		name = "Blur", desc = "Blurs the whole screen",
+		onToggle = F.blur,
+		sliders = { { label = "Blur size", min = 0, max = 40, default = 10,
+			onChange = function(v) cfg.blur = v F.blurUpdate() end } },
+	})
+	addModule("Visuals", {
+		name = "Depth of Field", desc = "Blurs things far from the focus point",
+		onToggle = F.dof,
+		sliders = { { label = "Focus distance", min = 5, max = 300, default = 60,
+			onChange = function(v) cfg.dof = v F.dofUpdate() end } },
+	})
+
+	-- World
+	addModule("World", {
+		name = "Exposure", desc = "Makes the whole scene brighter or darker",
+		onToggle = F.exposure,
+		sliders = { { label = "Exposure", min = -50, max = 50, default = 0,
+			onChange = function(v) cfg.exposure = v F.exposureUpdate() end } },
+	})
+	addModule("World", {
+		name = "Brightness", desc = "Lighting brightness",
+		onToggle = F.brightness,
+		sliders = { { label = "Brightness level", min = 0, max = 100, default = 20,
+			onChange = function(v) cfg.brightness = v F.brightnessUpdate() end } },
+	})
+	addModule("World", {
+		name = "Custom Fog", desc = "Set how far you can see",
+		onToggle = F.fogDist,
+		sliders = { { label = "Fog distance", min = 30, max = 2000, default = 400,
+			onChange = function(v) cfg.fogDist = v F.fogDistUpdate() end } },
+	})
+	addModule("World", { name = "No Sky", desc = "Hides sun, moon, stars and clouds", onToggle = F.noSky })
+	addModule("World", {
+		name = "Disco Lights", desc = "Lighting cycles through colors",
+		onToggle = F.disco,
+		sliders = { { label = "Disco speed", min = 1, max = 100, default = 20,
+			onChange = function(v) cfg.disco = v end } },
+	})
+	addModule("World", {
+		name = "Sun Rays", desc = "Adds light beams from the sun",
+		onToggle = F.sunRays,
+		sliders = { { label = "Sun ray strength", min = 0, max = 100, default = 25,
+			onChange = function(v) cfg.rays = v F.sunRaysUpdate() end } },
+	})
+	addModule("World", {
+		name = "Snowfall", desc = "Snow falls around you",
+		onToggle = F.snow,
+		sliders = { { label = "Snow amount", min = 20, max = 1500, default = 300,
+			onChange = function(v) cfg.snow = v end } },
+	})
+	addModule("World", {
+		name = "Rainfall", desc = "Rain falls around you",
+		onToggle = F.rainfall,
+		sliders = { { label = "Rain amount", min = 50, max = 2500, default = 600,
+			onChange = function(v) cfg.rainRate = v end } },
+	})
+
+	do
+		local card = makeCard("World")
+		makeTitle(card, "Gravity presets")
+		local row = new("Frame", {
+			Size = UDim2.new(1, 0, 0, 30),
+			BackgroundTransparency = 1,
+			LayoutOrder = nextOrder(),
+		}, card)
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8) }, row)
+		local function preset(text, v)
+			local b = new("TextButton", {
+				Size = UDim2.new(0, 70, 1, 0),
+				BackgroundColor3 = OFFCOL,
+				TextColor3 = TEXT,
+				Font = Enum.Font.GothamBold,
+				TextSize = 12,
+				Text = text,
+				AutoButtonColor = false,
+			}, row)
+			corner(b, 6)
+			hover(b, OFFCOL, Color3.fromRGB(80, 88, 106))
+			pressFx(b)
+			b.MouseButton1Click:Connect(function()
+				local setter = sliderSetters["gravity"]
+				if setter then setter(v) end
+				for _, m in ipairs(modules) do
+					if m.name == "Gravity" and not m.on then setModule(m, true, true) end
+				end
+				notify("Gravity set to " .. v)
+			end)
+		end
+		preset("Moon", 30)
+		preset("Mars", 75)
+		preset("Earth", 196)
+		preset("Heavy", 350)
+	end
+
+	-- Players
+	do
+		local card = makeCard("Players")
+		makeTitle(card, "Spectate")
+		local row = new("Frame", {
+			Size = UDim2.new(1, 0, 0, 30),
+			BackgroundTransparency = 1,
+			LayoutOrder = nextOrder(),
+		}, card)
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 8) }, row)
+		local function stepBtn(text, dir)
+			local b = new("TextButton", {
+				Size = UDim2.new(0.5, -4, 1, 0),
+				BackgroundColor3 = OFFCOL,
+				TextColor3 = TEXT,
+				Font = Enum.Font.GothamBold,
+				TextSize = 12,
+				Text = text,
+				AutoButtonColor = false,
+			}, row)
+			corner(b, 6)
+			hover(b, OFFCOL, Color3.fromRGB(80, 88, 106))
+			pressFx(b)
+			b.MouseButton1Click:Connect(function() F.spectateStep(dir) end)
+		end
+		stepBtn("< Previous player", -1)
+		stepBtn("Next player >", 1)
+	end
+
+	-- Performance
+	addModule("Performance", {
+		name = "Graphics Quality", desc = "Force a graphics quality level (1 is lowest)",
+		onToggle = F.quality,
+		sliders = { { label = "Graphics level", min = 1, max = 21, default = 5,
+			onChange = function(v) cfg.quality = v F.qualityUpdate() end } },
+	})
+	addModule("Performance", { name = "No Grass", desc = "Turns off terrain grass", onToggle = F.noGrass })
+
+	-- Misc
+	addModule("Misc", { name = "Auto Rejoin", desc = "Rejoins automatically if you get disconnected", onToggle = F.autoRejoin })
+	addModule("Misc", { name = "Clock HUD", desc = "Real time and how long you have played", onToggle = F.clockHud })
+	addModule("Misc", { name = "Hide Player List", desc = "Hides the Roblox leaderboard", onToggle = F.coreGui(Enum.CoreGuiType.PlayerList) })
+	addModule("Misc", { name = "Hide Chat", desc = "Hides the Roblox chat window", onToggle = F.coreGui(Enum.CoreGuiType.Chat) })
+	addModule("Misc", { name = "Hide Backpack", desc = "Hides the Roblox hotbar", onToggle = F.coreGui(Enum.CoreGuiType.Backpack) })
+
+	do
+		local card = makeCard("Misc")
+		makeTitle(card, "Notes (cleared when you leave)")
+		local box = new("TextBox", {
+			Size = UDim2.new(1, 0, 0, 90),
+			BackgroundColor3 = BG,
+			TextColor3 = TEXT,
+			PlaceholderText = "type anything here...",
+			PlaceholderColor3 = SUB,
+			Font = Enum.Font.Code,
+			TextSize = 13,
+			ClearTextOnFocus = false,
+			Text = "",
+			MultiLine = true,
+			TextWrapped = true,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Top,
+			LayoutOrder = nextOrder(),
+		}, card)
+		corner(box, 6)
+		new("UIPadding", { PaddingLeft = UDim.new(0, 8), PaddingTop = UDim.new(0, 6) }, box)
+	end
+end
+
+-- =====================================================
+-- MENU CONTENT: MORE
+-- =====================================================
+do
+	addModule("Movement", { name = "Auto Walk", desc = "Keeps walking forward by itself", onToggle = F.autoWalk })
+	addModule("Movement", { name = "Auto Jump", desc = "Jumps whenever you walk", onToggle = F.autoJump })
+	addModule("Movement", { name = "Freeze Me", desc = "Locks your character in place", onToggle = F.freezeMe })
+
+	addModule("Visuals", { name = "Camera Through Walls", desc = "The camera ignores walls", onToggle = F.camThrough })
+	addModule("Visuals", { name = "Close Zoom", desc = "Lets you zoom all the way into first person", onToggle = F.closeZoom })
+	addModule("Visuals", {
+		name = "Light Aura", desc = "A glow around you (only you see it)",
+		onToggle = F.aura,
+		sliders = { { label = "Aura range", min = 8, max = 60, default = 25,
+			onChange = function(v) cfg.aura = v F.auraUpdate() end } },
+	})
+	addModule("Visuals", { name = "Trail", desc = "A glowing trail behind you (only you see it)", onToggle = F.trail })
+
+	addModule("World", { name = "Night Vision", desc = "Bright green tinted vision", onToggle = F.nightVision })
+
+	addModule("Misc", {
+		name = "Character Size", desc = "Scale your character (R15 only, only you see it)",
+		onToggle = F.charSize,
+		sliders = { { label = "Size percent", min = 40, max = 400, default = 100,
+			onChange = function(v) cfg.size = v F.charSizeUpdate() end } },
+	})
+
+	addButton("Teleport", "Go Back (undo last teleport)", F.goBack, Enum.KeyCode.Backspace)
+
+	-- Attach mode picker (goes to the top of the Players tab)
+	do
+		local card = makeCard("Players")
+		card.LayoutOrder = 0
+		makeTitle(card, "Attach mode (head sit and more)")
+		local row = new("Frame", {
+			Size = UDim2.new(1, 0, 0, 30),
+			BackgroundTransparency = 1,
+			LayoutOrder = nextOrder(),
+		}, card)
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6) }, row)
+
+		local btns = {}
+		local function refresh()
+			for name, b in pairs(btns) do
+				local sel = F.getAttachMode() == name
+				tween(b, {
+					BackgroundColor3 = sel and accent or OFFCOL,
+					TextColor3 = sel and Color3.new(0, 0, 0) or TEXT,
+				}, TI.fast)
+			end
+		end
+		for _, name in ipairs(F.attachModes) do
+			local b = new("TextButton", {
+				Size = UDim2.new(0.2, -5, 1, 0),
+				BackgroundColor3 = OFFCOL,
+				TextColor3 = TEXT,
+				Font = Enum.Font.GothamBold,
+				TextSize = 12,
+				Text = name,
+				AutoButtonColor = false,
+			}, row)
+			corner(b, 6)
+			pressFx(b)
+			btns[name] = b
+			b.MouseButton1Click:Connect(function()
+				F.setAttachMode(name)
+				refresh()
+			end)
+		end
+		refresh()
+
+		new("TextLabel", {
+			Size = UDim2.new(1, 0, 0, 30),
+			BackgroundTransparency = 1,
+			Text = "Pick a mode, then press Attach next to a player. Head = sit on their head, Back = piggyback.",
+			TextColor3 = SUB,
+			Font = Enum.Font.Gotham,
+			TextSize = 11,
+			TextWrapped = true,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextYAlignment = Enum.TextYAlignment.Top,
+			LayoutOrder = nextOrder(),
+		}, card)
+
+		local det = addButton("Players", "Detach", function()
+			F.attach(nil)
+			UI.rebuildPlayers()
+			notify("Detached")
+		end)
+		det.Parent.LayoutOrder = 1
+	end
+end
+
+-- =====================================================
+-- MENU CONTENT: NAME TAGS
+-- =====================================================
+addModule("Visuals", {
+	name = "Far Name Tags", desc = "See player names and health from very far away",
+	onToggle = F.farNames,
+	sliders = { { label = "Name distance", min = 100, max = 10000, default = 2000,
+		onChange = function(v) cfg.nameDist = v F.farNamesUpdate() end } },
+})
 
 -- =====================================================
 -- MENU CONTENT: CONSOLE
@@ -2820,6 +4282,12 @@ do
 		tint = "ambienttint", cycle = "timecycle", ghost = "ghostmode", skin = "rainbowskin",
 		hud = "infohud", delete = "clickdelete", shadows = "noshadows", particles = "noparticles",
 		respawn = "respawnwhereidied", time = "timechanger",
+		farnames = "farnametags", nametags = "farnametags",
+		snow = "snowfall", rainfall = "rainfall", wall = "wallclimb", climb = "wallclimb",
+		ragdoll = "antiragdoll", bars = "cinematicbars", hip = "hipheight", dof = "depthoffield",
+		quality = "graphicsquality", sky = "nosky", disco = "discolights", rays = "sunrays",
+		players = "hideplayers", names = "hidenametags", clock = "clockhud", grass = "nograss",
+		rejoinauto = "autorejoin", tintscreen = "screentint", camoffset = "cameraoffset",
 	}
 
 	local function findModule(word)
@@ -2845,6 +4313,15 @@ do
 		freecam = { "freecam speed", "Freecam" },
 		bloom = { "bloom intensity", "Bloom Glow" },
 		volume = { "volume", nil },
+		namedist = { "name distance", "Far Name Tags" },
+		hip = { "hip height", "Hip Height" },
+		blur = { "blur size", "Blur" },
+		snow = { "snow amount", "Snowfall" },
+		rain = { "rain amount", "Rainfall" },
+		fog = { "fog distance", "Custom Fog" },
+		exposure = { "exposure", "Exposure" },
+		climb = { "climb speed", "Wall Climb" },
+		blink = { "blink distance", nil },
 	}
 
 	local cmds = {}
@@ -2930,6 +4407,65 @@ do
 	cmds.rejoin = function()
 		cprint("rejoining...", accent)
 		pcall(function() TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, player) end)
+	end
+
+	cmds.panic = function()
+		F.panic()
+		cprint("everything turned off", accent)
+	end
+
+	cmds.sit = function()
+		F.sit()
+		cprint("sitting", accent)
+	end
+
+	cmds.pos = function()
+		local root = getRoot()
+		if root then
+			local p = root.Position
+			cprint(string.format("position: %d, %d, %d", math.floor(p.X), math.floor(p.Y), math.floor(p.Z)), accent)
+		end
+	end
+
+	cmds.blink = function()
+		F.blink()
+		cprint("blinked forward", accent)
+	end
+
+	cmds.attach = function(args)
+		local plr = findPlayer(args[1])
+		if not plr then
+			cprint("player not found", RED)
+			return
+		end
+		if args[2] then
+			for _, name in ipairs(F.attachModes) do
+				if name:lower() == args[2]:lower() then F.setAttachMode(name) end
+			end
+		end
+		F.attach(plr)
+		cprint(F.getAttachMode() .. " attach: " .. plr.Name, accent)
+	end
+
+	cmds.detach = function()
+		F.attach(nil)
+		cprint("detached", accent)
+	end
+
+	cmds.headsit = function(args)
+		local plr = findPlayer(args[1])
+		if not plr then
+			cprint("player not found", RED)
+			return
+		end
+		F.setAttachMode("Head")
+		F.attach(plr)
+		cprint("sitting on " .. plr.Name .. "'s head", accent)
+	end
+
+	cmds.back = function()
+		F.goBack()
+		cprint("went back", accent)
 	end
 
 	local function run(text)
@@ -3026,7 +4562,7 @@ end
 -- =====================================================
 bind(UIS.InputBegan, function(input, processed)
 	if unloaded or processed then return end
-	if input.KeyCode == Enum.KeyCode.RightShift then
+	if input.KeyCode == UI.menuKey then
 		UI.showMenu(not UI.menuOpen)
 		return
 	end
