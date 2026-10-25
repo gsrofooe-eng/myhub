@@ -1,8 +1,4 @@
---[[
-	NEXUS CLIENT v5.0  (single LocalScript)
-	Put this in: StarterPlayer > StarterPlayerScripts > LocalScript
-	RightShift or the [ NEXUS ] button opens the menu.
-]]
+--Claude coded!
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
@@ -22,9 +18,7 @@ do
 	if old then old:Destroy() end
 end
 
--- =====================================================
--- THEME + CORE HELPERS
--- =====================================================
+
 local WIN_W, WIN_H = 740, 480
 
 local BG = Color3.fromRGB(10, 12, 16)
@@ -137,9 +131,7 @@ local function getPing()
 	return ping
 end
 
--- =====================================================
--- SHARED STATE
--- =====================================================
+
 local cfg = {
 	flySpeed = 60, walkSpeed = 50, jumpPower = 120, spinSpeed = 20, zoom = 520,
 	gravity = 196, time = 14, sprint = 2, dash = 90, glide = 12, fov = 70,
@@ -155,8 +147,8 @@ local S = {
 
 local NORMAL_SPEED, NORMAL_JUMP = 16, 50
 
-local F = {}              -- feature functions
-local UI = {}             -- gui references and gui functions
+local F = {}              
+local UI = {}             
 local modules = {}
 local keyActions = {}
 local sliderSetters = {}
