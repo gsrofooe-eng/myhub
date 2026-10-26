@@ -1,4 +1,8 @@
-
+--[[
+	NEXUS CLIENT v7.0  (single LocalScript)
+	Put this in: StarterPlayer > StarterPlayerScripts > LocalScript
+	RightShift or the [ NEXUS ] button opens the menu.
+]]
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
@@ -144,7 +148,11 @@ local cfg = {
 	climb = 35, hip = 8, camX = 0, camY = 0, blink = 25, blur = 10, dof = 60, rays = 25,
 	exposure = 0, brightness = 20, fogDist = 400, disco = 20, snow = 300, rainRate = 600,
 	tintHue = 0, tintAlpha = 15, bars = 12, quality = 5, toastTime = 2,
-	size = 100, aura = 25, nameDist = 2000,
+	size = 100, aura = 25, nameDist = 2000, bodyHue = 120,
+	radarRange = 200, radarSize = 170, mblur = 50, mblurMax = 20,
+	skyHue = 210, skySat = 60, skyDensity = 35, horizonHue = 20, animSpeed = 100,
+	chSize = 10, chGap = 4, chThick = 2, chHue = 0,
+	shake = 20, tilt = 0, kick = 15, vig = 60,
 }
 
 local S = {
@@ -612,7 +620,7 @@ end
 -- FEATURES: VISUALS
 -- =====================================================
 
--- ESP
+-- ESP (outline, name tag, optional boxes and health bars, team colors)
 do
 	local on_ = false
 	local objs, conns = {}, {}
@@ -621,8 +629,9 @@ do
 	local function remove(plr)
 		local o = objs[plr]
 		if o then
-			if o.hl then o.hl:Destroy() end
-			if o.tag then o.tag:Destroy() end
+			for _, key in ipairs({ "hl", "tag", "box", "bar" }) do
+				if o[key] then o[key]:Destroy() end
+			end
 			objs[plr] = nil
 		end
 	end
@@ -630,36 +639,74 @@ do
 	local function add(plr)
 		if plr == player then return end
 		remove(plr)
+		if not F.isEnemy(plr) then return end
 		local char = plr.Character
 		if not char then return end
+		local col = F.colorFor(plr) or accent
+		local o = {}
 
-		local hl = new("Highlight", {
-			FillColor = accent,
+		o.hl = new("Highlight", {
+			FillColor = col,
 			FillTransparency = 0.65,
 			OutlineColor = Color3.new(1, 1, 1),
 			DepthMode = Enum.HighlightDepthMode.AlwaysOnTop,
 		}, char)
 
-		local tag, label
 		local head = char:FindFirstChild("Head")
 		if head then
-			tag = new("BillboardGui", {
+			o.tag = new("BillboardGui", {
 				Size = UDim2.new(0, 150, 0, 48),
 				StudsOffset = Vector3.new(0, 2.8, 0),
 				AlwaysOnTop = true,
 				Adornee = head,
 			}, head)
-			label = new("TextLabel", {
+			o.label = new("TextLabel", {
 				Size = UDim2.new(1, 0, 1, 0),
 				BackgroundTransparency = 1,
-				TextColor3 = accent,
+				TextColor3 = col,
 				TextStrokeTransparency = 0.4,
 				Font = Enum.Font.Code,
 				TextSize = 13,
 				Text = plr.Name,
-			}, tag)
+			}, o.tag)
 		end
-		objs[plr] = { hl = hl, tag = tag, label = label }
+
+		local root = char:FindFirstChild("HumanoidRootPart")
+		if root and S.espBoxes then
+			o.box = new("BillboardGui", {
+				Size = UDim2.new(4, 0, 5.5, 0),
+				AlwaysOnTop = true,
+				Adornee = root,
+			}, root)
+			local f = new("Frame", {
+				Size = UDim2.new(1, 0, 1, 0),
+				BackgroundTransparency = 1,
+			}, o.box)
+			o.boxStroke = new("UIStroke", { Color = col, Thickness = 1.5 }, f)
+		end
+		if root and S.espHealth then
+			o.bar = new("BillboardGui", {
+				Size = UDim2.new(0, 5, 5.5, 0),
+				StudsOffset = Vector3.new(-2.8, 0, 0),
+				AlwaysOnTop = true,
+				Adornee = root,
+			}, root)
+			local back = new("Frame", {
+				Size = UDim2.new(1, 0, 1, 0),
+				BackgroundColor3 = Color3.new(0, 0, 0),
+				BackgroundTransparency = 0.3,
+				BorderSizePixel = 0,
+			}, o.bar)
+			o.fill = new("Frame", {
+				AnchorPoint = Vector2.new(0, 1),
+				Position = UDim2.new(0, 0, 1, 0),
+				Size = UDim2.new(1, 0, 1, 0),
+				BackgroundColor3 = Color3.fromRGB(80, 255, 100),
+				BorderSizePixel = 0,
+			}, back)
+		end
+
+		objs[plr] = o
 	end
 
 	local function hook(plr)
@@ -683,7 +730,7 @@ do
 			end)
 			local last = 0
 			loop = RunService.Heartbeat:Connect(function()
-				if os.clock() - last < 0.2 then return end
+				if os.clock() - last < 0.15 then return end
 				last = os.clock()
 				local myRoot = getRoot()
 				if not myRoot then return end
@@ -691,10 +738,21 @@ do
 					local c = plr.Character
 					local r = c and c:FindFirstChild("HumanoidRootPart")
 					local h = c and c:FindFirstChildOfClass("Humanoid")
+					local col = F.colorFor(plr) or accent
+					if o.hl then o.hl.FillColor = col end
+					if o.boxStroke then o.boxStroke.Color = col end
 					if r and o.label then
 						local d = (r.Position - myRoot.Position).Magnitude
 						local hp = h and math.floor(h.Health) or 0
 						o.label.Text = plr.Name .. "\n" .. math.floor(d) .. " studs | " .. hp .. " hp"
+						o.label.TextColor3 = col
+					end
+					if h and o.fill then
+						local frac = math.clamp(h.Health / math.max(h.MaxHealth, 1), 0, 1)
+						tween(o.fill, {
+							Size = UDim2.new(1, 0, frac, 0),
+							BackgroundColor3 = Color3.fromHSV(frac * 0.33, 0.8, 1),
+						}, TI.fast)
 					end
 				end
 			end)
@@ -705,6 +763,15 @@ do
 			for _, c in pairs(conns) do c:Disconnect() end
 			conns = {}
 			for plr in pairs(objs) do remove(plr) end
+		end
+	end
+
+	-- rebuild everyone (used when boxes / health bars / team colors are toggled)
+	function F.espRefresh()
+		if on_ then
+			for _, plr in ipairs(Players:GetPlayers()) do
+				if plr ~= player and plr.Character then add(plr) end
+			end
 		end
 	end
 end
@@ -741,7 +808,7 @@ do
 
 			local seen = {}
 			for _, plr in ipairs(Players:GetPlayers()) do
-				if plr ~= player then
+				if plr ~= player and F.isEnemy(plr) then
 					local r = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
 					if r then
 						seen[plr] = true
@@ -1345,6 +1412,7 @@ do
 		counter += 1
 		name = name or ("WP" .. counter)
 		table.insert(waypoints, { name = name, cf = root.CFrame })
+		if F.beaconsRefresh then F.beaconsRefresh() end
 		notify("Saved " .. name)
 		if UI.rebuildWaypoints then UI.rebuildWaypoints() end
 	end
@@ -2082,6 +2150,596 @@ do
 end
 
 -- =====================================================
+-- BODY COSMETICS (only you see these)
+-- =====================================================
+do
+	local function bodyParts()
+		local list = {}
+		local c = player.Character
+		if c then
+			for _, part in ipairs(c:GetChildren()) do
+				if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+					table.insert(list, part)
+				end
+			end
+		end
+		return list
+	end
+
+	-- Material swaps
+	local function makeMaterial(material)
+		local saved = {}
+		return function(on)
+			if on then
+				for _, part in ipairs(bodyParts()) do
+					if saved[part] == nil then saved[part] = part.Material end
+					part.Material = material
+				end
+			else
+				for part, m in pairs(saved) do
+					pcall(function() part.Material = m end)
+				end
+				saved = {}
+			end
+		end
+	end
+	F.neonBody = makeMaterial(Enum.Material.Neon)
+	F.forcefieldBody = makeMaterial(Enum.Material.ForceField)
+
+	-- Body color
+	local colSaved, colOn = {}, false
+	local function applyColor()
+		local col = Color3.fromHSV(cfg.bodyHue / 360, 0.85, 1)
+		for _, part in ipairs(bodyParts()) do
+			if colSaved[part] == nil then colSaved[part] = part.Color end
+			part.Color = col
+		end
+	end
+	function F.bodyColor(on)
+		colOn = on
+		if on then
+			applyColor()
+		else
+			for part, c in pairs(colSaved) do
+				pcall(function() part.Color = c end)
+			end
+			colSaved = {}
+		end
+	end
+	function F.bodyColorUpdate()
+		if colOn then applyColor() end
+	end
+
+	-- Headless
+	local headSaved
+	function F.headless(on)
+		local c = player.Character
+		local head = c and c:FindFirstChild("Head")
+		if not head then return end
+		local face = head:FindFirstChildOfClass("Decal")
+		if on then
+			if headSaved == nil then headSaved = head.Transparency end
+			head.Transparency = 1
+			if face then face.Transparency = 1 end
+		elseif headSaved ~= nil then
+			head.Transparency = headSaved
+			if face then face.Transparency = 0 end
+			headSaved = nil
+		end
+	end
+
+	-- Hide accessories
+	local accSaved = {}
+	function F.hideAccessories(on)
+		local c = player.Character
+		if not c then return end
+		if on then
+			for _, a in ipairs(c:GetChildren()) do
+				if a:IsA("Accessory") then
+					local h = a:FindFirstChild("Handle")
+					if h then
+						if accSaved[h] == nil then accSaved[h] = h.Transparency end
+						h.Transparency = 1
+					end
+				end
+			end
+		else
+			for h, t in pairs(accSaved) do
+				pcall(function() h.Transparency = t end)
+			end
+			accSaved = {}
+		end
+	end
+
+	-- Korblox right leg (R15). Method 1 copies the legs from a character Roblox builds.
+	-- Method 2 (fallback) overlays the Korblox meshes directly.
+	local KORBLOX_LEG = 139607718
+	local KORBLOX_TEXTURE = 902843398
+	local legNames = { "RightUpperLeg", "RightLowerLeg", "RightFoot" }
+	local legMeshes = { RightUpperLeg = 902942093, RightLowerLeg = 902942096, RightFoot = 902942089 }
+	local korbloxOn = false
+	local korbloxParts, hidden = {}, {}
+
+	local function clearKorblox()
+		for _, part in ipairs(korbloxParts) do
+			pcall(function() part:Destroy() end)
+		end
+		korbloxParts = {}
+		for part, t in pairs(hidden) do
+			pcall(function() part.Transparency = t end)
+		end
+		hidden = {}
+	end
+
+	local function attachLeg(dst, visual)
+		visual.Anchored = false
+		visual.CanCollide = false
+		visual.CanTouch = false
+		visual.CanQuery = false
+		visual.Massless = true
+		visual.CFrame = dst.CFrame
+		visual.Parent = dst.Parent
+		local weld = Instance.new("WeldConstraint")
+		weld.Part0 = dst
+		weld.Part1 = visual
+		weld.Parent = visual
+		table.insert(korbloxParts, visual)
+		hidden[dst] = dst.Transparency
+		dst.Transparency = 1
+	end
+
+	local function methodModel(char)
+		local desc = Instance.new("HumanoidDescription")
+		desc.RightLeg = KORBLOX_LEG
+		local model = Players:CreateHumanoidModelFromDescription(desc, Enum.HumanoidRigType.R15)
+		desc:Destroy()
+		local count = 0
+		for _, name in ipairs(legNames) do
+			local src = model:FindFirstChild(name)
+			local dst = char:FindFirstChild(name)
+			if src and dst and src:IsA("MeshPart") then
+				local clone = src:Clone()
+				for _, child in ipairs(clone:GetChildren()) do
+					if not child:IsA("SurfaceAppearance") then child:Destroy() end
+				end
+				clone.Name = "NexusKorblox" .. name
+				attachLeg(dst, clone)
+				count += 1
+			end
+		end
+		model:Destroy()
+		return count
+	end
+
+	local function methodMesh(char)
+		local count = 0
+		for _, name in ipairs(legNames) do
+			local dst = char:FindFirstChild(name)
+			if dst then
+				local part = Instance.new("Part")
+				part.Name = "NexusKorblox" .. name
+				part.Size = dst.Size
+				part.Color = Color3.fromRGB(25, 25, 25)
+				local mesh = Instance.new("SpecialMesh")
+				mesh.MeshType = Enum.MeshType.FileMesh
+				mesh.MeshId = "rbxassetid://" .. legMeshes[name]
+				mesh.TextureId = "rbxassetid://" .. KORBLOX_TEXTURE
+				mesh.Scale = Vector3.one
+				mesh.Parent = part
+				attachLeg(dst, part)
+				count += 1
+			end
+		end
+		return count
+	end
+
+	function F.korblox(on)
+		korbloxOn = on
+		clearKorblox()
+		if not on then return end
+
+		local char = player.Character
+		local hum = getHum()
+		if not char or not hum then return end
+		if hum.RigType ~= Enum.HumanoidRigType.R15 then
+			notify("Korblox needs an R15 character", false)
+			return
+		end
+
+		task.spawn(function()
+			local okA, resA = pcall(methodModel, char)
+			if not korbloxOn or player.Character ~= char then
+				clearKorblox()
+				return
+			end
+			if okA and resA and resA > 0 then
+				notify("Korblox on")
+				return
+			end
+			warn("[NEXUS] Korblox method 1 failed: " .. tostring(resA))
+
+			clearKorblox()
+			local okC, resC = pcall(methodMesh, char)
+			if okC and resC and resC > 0 then
+				notify("Korblox on (mesh method)")
+				return
+			end
+			warn("[NEXUS] Korblox method 2 failed: " .. tostring(resC))
+			clearKorblox()
+			notify("Korblox failed - check the Output window", false)
+		end)
+	end
+end
+
+-- Re-apply cosmetics after you respawn
+bind(player.CharacterAdded, function()
+	task.wait(1.2)
+	if unloaded then return end
+	for _, m in ipairs(modules) do
+		if m.on and m.def.reapply then pcall(m.def.onToggle, true) end
+	end
+end)
+
+-- Keeps your speed and jump from being reset by the game
+do
+	local conn
+	function F.statLock(on)
+		if conn then conn:Disconnect() conn = nil end
+		if on then
+			conn = RunService.Heartbeat:Connect(function()
+				if (S.speedOn or S.jumpOn) and not S.freecam and not UIS:IsKeyDown(Enum.KeyCode.LeftShift) then
+					F.applyStats()
+				end
+			end)
+		end
+	end
+end
+
+-- Hide the Roblox top bar
+function F.hideTopbar(on)
+	pcall(function() StarterGui:SetCore("TopbarEnabled", not on) end)
+end
+
+-- Tools
+function F.equipNextTool()
+	local hum = getHum()
+	local bp = player:FindFirstChildOfClass("Backpack")
+	if not hum or not bp then return end
+	local list = {}
+	for _, t in ipairs(bp:GetChildren()) do
+		if t:IsA("Tool") then table.insert(list, t) end
+	end
+	if #list == 0 then
+		notify("No tools in your backpack", false)
+		return
+	end
+	hum:EquipTool(list[1])
+	notify("Equipped " .. list[1].Name)
+end
+
+function F.unequipTools()
+	local hum = getHum()
+	if hum then hum:UnequipTools() end
+end
+
+-- =====================================================
+-- WAYPOINT BEACONS + MOTION BLUR
+-- =====================================================
+
+-- Waypoint beacons: a glowing beam and a distance label at every saved waypoint
+do
+	local active = false
+	local objs = {}
+	local conn
+
+	local function clear()
+		for _, o in pairs(objs) do
+			if o.part then o.part:Destroy() end
+		end
+		objs = {}
+	end
+
+	local function build()
+		clear()
+		if not active then return end
+		for _, w in ipairs(waypoints) do
+			local part = new("Part", {
+				Name = "NexusBeacon",
+				Anchored = true,
+				CanCollide = false,
+				CanQuery = false,
+				CanTouch = false,
+				Material = Enum.Material.Neon,
+				Color = accent,
+				Transparency = 0.35,
+				Size = Vector3.new(0.5, 120, 0.5),
+				CFrame = CFrame.new(w.cf.Position + Vector3.new(0, 60, 0)),
+			}, workspace)
+			local tag = new("BillboardGui", {
+				Size = UDim2.new(0, 170, 0, 40),
+				StudsOffsetWorldSpace = Vector3.new(0, -56, 0),
+				AlwaysOnTop = true,
+			}, part)
+			local label = new("TextLabel", {
+				Size = UDim2.new(1, 0, 1, 0),
+				BackgroundTransparency = 1,
+				TextColor3 = accent,
+				TextStrokeTransparency = 0.4,
+				Font = Enum.Font.Code,
+				TextSize = 13,
+				Text = w.name,
+			}, tag)
+			objs[w] = { part = part, label = label, name = w.name, pos = w.cf.Position }
+		end
+	end
+
+	function F.beacons(on)
+		active = on
+		if conn then conn:Disconnect() conn = nil end
+		build()
+		if on then
+			local last = 0
+			conn = RunService.Heartbeat:Connect(function()
+				if os.clock() - last < 0.25 then return end
+				last = os.clock()
+				local root = getRoot()
+				if not root then return end
+				for _, o in pairs(objs) do
+					local d = (o.pos - root.Position).Magnitude
+					o.label.Text = o.name .. "\n" .. math.floor(d) .. " studs"
+				end
+			end)
+		end
+	end
+
+	function F.beaconsRefresh()
+		if active then build() end
+	end
+end
+
+-- Motion blur: Roblox has no directional blur, so the screen blurs based on
+-- how fast the camera turns and moves
+do
+	local conn, fx
+	function F.motionBlur(on)
+		if conn then conn:Disconnect() conn = nil end
+		if fx then fx:Destroy() fx = nil end
+		if not on then return end
+
+		fx = new("BlurEffect", { Size = 0 }, Lighting)
+		local cam = workspace.CurrentCamera
+		local lastLook, lastPos = cam.CFrame.LookVector, cam.CFrame.Position
+		local current = 0
+
+		conn = RunService.RenderStepped:Connect(function(dt)
+			local c = workspace.CurrentCamera
+			if not c or dt <= 0 then return end
+			local look, pos = c.CFrame.LookVector, c.CFrame.Position
+			local turn = math.deg(math.acos(math.clamp(lastLook:Dot(look), -1, 1))) / dt
+			local speed = (pos - lastPos).Magnitude / dt
+			lastLook, lastPos = look, pos
+
+			local target = (turn * 0.04 + speed * 0.05) * (cfg.mblur / 50)
+			target = math.clamp(target, 0, cfg.mblurMax)
+			current = current + (target - current) * (1 - math.exp(-dt * 12))
+			if fx then fx.Size = current end
+		end)
+	end
+end
+
+-- =====================================================
+-- TEAM COLORS, SKY, ANIMATIONS
+-- =====================================================
+function F.isEnemy(plr)
+	if S.teamCheck and plr.Team ~= nil and plr.Team == player.Team then return false end
+	return true
+end
+
+function F.colorFor(plr)
+	if S.teamColors and plr.Team then return plr.TeamColor.Color end
+	return nil
+end
+
+function F.targetNearest()
+	local root = getRoot()
+	if not root then return end
+	local best, bestD = nil, math.huge
+	for _, plr in ipairs(Players:GetPlayers()) do
+		local r = plr ~= player and F.isEnemy(plr) and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+		if r then
+			local d = (r.Position - root.Position).Magnitude
+			if d < bestD then best, bestD = plr, d end
+		end
+	end
+	if best then
+		F.setTarget(best)
+	else
+		notify("No players found", false)
+	end
+end
+
+-- Sky color (uses Atmosphere, which tints the whole sky)
+do
+	local atm, created, saved
+	local function apply()
+		if not atm then return end
+		local sat = cfg.skySat / 100
+		atm.Color = Color3.fromHSV(cfg.skyHue / 360, sat, 1)
+		atm.Decay = Color3.fromHSV(cfg.horizonHue / 360, sat, 0.6)
+		atm.Density = cfg.skyDensity / 100
+		atm.Haze = 1
+		atm.Glare = 0
+		atm.Offset = 0.25
+	end
+	function F.skyColor(on)
+		if on then
+			atm = Lighting:FindFirstChildOfClass("Atmosphere")
+			if atm then
+				created = false
+				saved = {
+					Color = atm.Color, Decay = atm.Decay, Density = atm.Density,
+					Haze = atm.Haze, Glare = atm.Glare, Offset = atm.Offset,
+				}
+			else
+				created = true
+				atm = new("Atmosphere", {}, Lighting)
+			end
+			apply()
+		else
+			if atm then
+				if created then
+					atm:Destroy()
+				elseif saved then
+					for k, v in pairs(saved) do
+						pcall(function() atm[k] = v end)
+					end
+				end
+			end
+			atm, saved = nil, nil
+		end
+	end
+	function F.skyUpdate() apply() end
+end
+
+-- Animation player (R15)
+do
+	local track
+	function F.stopAnim()
+		if track then
+			track:Stop()
+			track = nil
+		end
+	end
+	function F.playAnim(id)
+		F.stopAnim()
+		local digits = tostring(id):gsub("%D", "")
+		if digits == "" then
+			notify("Type an animation ID first", false)
+			return
+		end
+		local hum = getHum()
+		local animator = hum and hum:FindFirstChildOfClass("Animator")
+		if not animator then
+			notify("No animator found on your character", false)
+			return
+		end
+		local anim = Instance.new("Animation")
+		anim.AnimationId = "rbxassetid://" .. digits
+		local ok, t = pcall(function() return animator:LoadAnimation(anim) end)
+		if ok and t then
+			track = t
+			track.Looped = true
+			track:Play()
+			track:AdjustSpeed(cfg.animSpeed / 100)
+			notify("Playing animation " .. digits)
+		else
+			notify("Could not load that animation", false)
+		end
+	end
+	function F.animSpeedUpdate()
+		if track then track:AdjustSpeed(cfg.animSpeed / 100) end
+	end
+end
+
+-- Grayscale filter
+do
+	local fx
+	function F.grayscale(on)
+		if fx then fx:Destroy() fx = nil end
+		if on then fx = new("ColorCorrectionEffect", { Saturation = -1 }, Lighting) end
+	end
+end
+
+-- Part highlighter (outlines whatever your mouse is over)
+do
+	local conn, hl
+	function F.partHighlighter(on)
+		if conn then conn:Disconnect() conn = nil end
+		if hl then hl:Destroy() hl = nil end
+		if on then
+			hl = new("Highlight", {
+				FillColor = accent,
+				OutlineColor = accent,
+				FillTransparency = 0.7,
+				DepthMode = Enum.HighlightDepthMode.AlwaysOnTop,
+			}, workspace)
+			conn = RunService.Heartbeat:Connect(function()
+				local t = mouse.Target
+				hl.Adornee = (t and not t:IsA("Terrain")) and t or nil
+			end)
+		end
+	end
+end
+
+-- Camera effects (shake and tilt)
+do
+	local NAME = "NexusCamFx"
+	local bound = false
+	function F.camFx(on)
+		if bound then
+			RunService:UnbindFromRenderStep(NAME)
+			bound = false
+		end
+		if on then
+			RunService:BindToRenderStep(NAME, Enum.RenderPriority.Camera.Value + 1, function()
+				local cam = workspace.CurrentCamera
+				if not cam then return end
+				local sh = cfg.shake / 100 * 0.03
+				cam.CFrame = cam.CFrame * CFrame.Angles(
+					(math.random() - 0.5) * sh, (math.random() - 0.5) * sh, math.rad(cfg.tilt))
+			end)
+			bound = true
+		end
+	end
+end
+
+-- FOV kick (the view widens when you move fast)
+do
+	local conn
+	function F.fovKick(on)
+		if conn then conn:Disconnect() conn = nil end
+		if on then
+			conn = RunService.RenderStepped:Connect(function(dt)
+				local cam = workspace.CurrentCamera
+				local root = getRoot()
+				if not cam or not root then return end
+				local v = root.AssemblyLinearVelocity
+				local speed = Vector3.new(v.X, 0, v.Z).Magnitude
+				local target = cfg.fov + math.clamp(speed / 60, 0, 1) * cfg.kick
+				cam.FieldOfView = cam.FieldOfView + (target - cam.FieldOfView) * (1 - math.exp(-dt * 8))
+			end)
+		else
+			local cam = workspace.CurrentCamera
+			if cam then cam.FieldOfView = cfg.fov end
+		end
+	end
+end
+
+-- Death marker (saves a waypoint where you die)
+do
+	local conn, marked, count = nil, false, 0
+	function F.deathMarker(on)
+		if conn then conn:Disconnect() conn = nil end
+		marked = false
+		if on then
+			conn = RunService.Heartbeat:Connect(function()
+				local hum, root = getHum(), getRoot()
+				if not hum or not root then return end
+				if hum.Health <= 0 then
+					if not marked then
+						marked = true
+						count += 1
+						F.saveWaypoint("Death " .. count)
+					end
+				else
+					marked = false
+				end
+			end)
+		end
+	end
+end
+
+-- =====================================================
 -- GUI: ROOT + OVERLAYS
 -- =====================================================
 UI.gui = new("ScreenGui", {
@@ -2283,6 +2941,437 @@ do
 					math.floor(sec / 60), sec % 60)
 			end)
 		end
+	end
+end
+
+-- Radar / minimap
+do
+	local frame = new("Frame", {
+		Size = UDim2.new(0, 170, 0, 170),
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -12, 0, 180),
+		BackgroundColor3 = PANEL,
+		BackgroundTransparency = 0.2,
+		Visible = false,
+	}, UI.gui)
+	new("UICorner", { CornerRadius = UDim.new(0.5, 0) }, frame)
+	reg(new("UIStroke", { Thickness = 1.5 }, frame), "Color")
+
+	new("Frame", {
+		Size = UDim2.new(0, 1, 1, 0), Position = UDim2.new(0.5, 0, 0, 0),
+		BackgroundColor3 = OFFCOL, BorderSizePixel = 0,
+	}, frame)
+	new("Frame", {
+		Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 0.5, 0),
+		BackgroundColor3 = OFFCOL, BorderSizePixel = 0,
+	}, frame)
+
+	local me = new("Frame", {
+		Size = UDim2.new(0, 8, 0, 8),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0.5, 0),
+		BorderSizePixel = 0,
+	}, frame)
+	reg(me, "BackgroundColor3")
+	corner(me, 4)
+
+	local rangeLabel = new("TextLabel", {
+		Size = UDim2.new(1, 0, 0, 14),
+		Position = UDim2.new(0, 0, 1, -22),
+		BackgroundTransparency = 1,
+		TextColor3 = SUB,
+		Font = Enum.Font.Code,
+		TextSize = 10,
+		Text = "",
+	}, frame)
+
+	UI.makeDraggable(frame)
+
+	local dots = {}
+	local conn
+
+	function F.radar(on)
+		if conn then conn:Disconnect() conn = nil end
+		frame.Visible = on
+		if on then
+			local last = 0
+			conn = RunService.RenderStepped:Connect(function()
+				if os.clock() - last < 0.03 then return end
+				last = os.clock()
+
+				local size = cfg.radarSize
+				frame.Size = UDim2.new(0, size, 0, size)
+				local radius = size / 2 - 8
+				rangeLabel.Text = cfg.radarRange .. " studs"
+
+				local root = getRoot()
+				local cam = workspace.CurrentCamera
+				if not root or not cam then return end
+
+				local seen = {}
+				for _, plr in ipairs(Players:GetPlayers()) do
+					if plr ~= player and F.isEnemy(plr) then
+						local r = plr.Character and plr.Character:FindFirstChild("HumanoidRootPart")
+						if r then
+							seen[plr] = true
+							-- rotate the offset so "up" on the radar is where the camera faces
+							local rel = cam.CFrame:VectorToObjectSpace(r.Position - root.Position)
+							local x = rel.X / cfg.radarRange * radius
+							local y = rel.Z / cfg.radarRange * radius
+							local mag = math.sqrt(x * x + y * y)
+							local far = mag > radius
+							if far then
+								x = x / mag * radius
+								y = y / mag * radius
+							end
+							local dot = dots[plr]
+							if not dot then
+								dot = new("Frame", {
+									Size = UDim2.new(0, 7, 0, 7),
+									AnchorPoint = Vector2.new(0.5, 0.5),
+									BorderSizePixel = 0,
+									BackgroundColor3 = RED,
+								}, frame)
+								corner(dot, 4)
+								dots[plr] = dot
+							end
+							dot.Position = UDim2.new(0.5, x, 0.5, y)
+							dot.BackgroundColor3 = F.colorFor(plr) or RED
+							dot.BackgroundTransparency = far and 0.6 or 0
+						end
+					end
+				end
+				for plr, dot in pairs(dots) do
+					if not seen[plr] then
+						dot:Destroy()
+						dots[plr] = nil
+					end
+				end
+			end)
+		else
+			for _, dot in pairs(dots) do dot:Destroy() end
+			dots = {}
+		end
+	end
+end
+
+-- Target HUD and profile card (animated panels)
+do
+	local function makePanel(width, height, pos)
+		local panel = new("CanvasGroup", {
+			Size = UDim2.new(0, width, 0, height),
+			AnchorPoint = Vector2.new(0.5, 1),
+			Position = pos,
+			BackgroundColor3 = PANEL,
+			GroupTransparency = 1,
+			Visible = false,
+		}, UI.gui)
+		corner(panel, 10)
+		reg(new("UIStroke", { Thickness = 1.5 }, panel), "Color")
+		local scale = new("UIScale", { Scale = 0.9 }, panel)
+		UI.makeDraggable(panel)
+		return panel, scale
+	end
+
+	local function animate(panel, scale, on)
+		if on then
+			panel.Visible = true
+			scale.Scale = 0.9
+			tween(scale, { Scale = 1 }, TI.back)
+			tween(panel, { GroupTransparency = 0 }, TI.slow)
+		else
+			local t = tween(panel, { GroupTransparency = 1 }, TI.exit)
+			tween(scale, { Scale = 0.92 }, TI.exit)
+			t.Completed:Connect(function()
+				if panel.GroupTransparency >= 0.99 then panel.Visible = false end
+			end)
+		end
+	end
+
+	local function label(parent, props)
+		props.BackgroundTransparency = 1
+		props.TextXAlignment = props.TextXAlignment or Enum.TextXAlignment.Left
+		props.TextTruncate = Enum.TextTruncate.AtEnd
+		return new("TextLabel", props, parent)
+	end
+
+	-- target HUD
+	local hud, hudScale = makePanel(250, 86, UDim2.new(0.5, 0, 1, -48))
+	local avatar = new("ImageLabel", {
+		Size = UDim2.new(0, 60, 0, 60), Position = UDim2.new(0, 10, 0, 13),
+		BackgroundColor3 = CARD, BorderSizePixel = 0, Image = "",
+	}, hud)
+	corner(avatar, 8)
+	local nameL = label(hud, {
+		Size = UDim2.new(1, -84, 0, 20), Position = UDim2.new(0, 78, 0, 10),
+		TextColor3 = TEXT, Font = Enum.Font.GothamBold, TextSize = 14, Text = "",
+	})
+	local userL = label(hud, {
+		Size = UDim2.new(1, -84, 0, 14), Position = UDim2.new(0, 78, 0, 29),
+		TextColor3 = SUB, Font = Enum.Font.Code, TextSize = 11, Text = "",
+	})
+	local barBack = new("Frame", {
+		Size = UDim2.new(1, -90, 0, 10), Position = UDim2.new(0, 78, 0, 50),
+		BackgroundColor3 = OFFCOL, BorderSizePixel = 0,
+	}, hud)
+	corner(barBack, 5)
+	local barFill = new("Frame", {
+		Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = Color3.fromRGB(80, 255, 100), BorderSizePixel = 0,
+	}, barBack)
+	corner(barFill, 5)
+	local hpL = label(hud, {
+		Size = UDim2.new(0, 80, 0, 14), Position = UDim2.new(0, 78, 0, 64),
+		TextColor3 = SUB, Font = Enum.Font.Code, TextSize = 11, Text = "",
+	})
+	local distL = label(hud, {
+		Size = UDim2.new(0, 80, 0, 14), Position = UDim2.new(0, 160, 0, 64),
+		TextColor3 = SUB, Font = Enum.Font.Code, TextSize = 11, Text = "",
+		TextXAlignment = Enum.TextXAlignment.Right,
+	})
+
+	-- profile card
+	local card, cardScale = makePanel(270, 126, UDim2.new(0.5, -270, 1, -48))
+	local cardAvatar = new("ImageLabel", {
+		Size = UDim2.new(0, 96, 0, 96), Position = UDim2.new(0, 12, 0, 15),
+		BackgroundColor3 = CARD, BorderSizePixel = 0, Image = "",
+	}, card)
+	corner(cardAvatar, 8)
+	local cardName = label(card, {
+		Size = UDim2.new(1, -126, 0, 18), Position = UDim2.new(0, 118, 0, 12),
+		TextColor3 = TEXT, Font = Enum.Font.GothamBold, TextSize = 13, Text = "",
+	})
+	local cardInfo = new("TextLabel", {
+		Size = UDim2.new(1, -126, 0, 90), Position = UDim2.new(0, 118, 0, 32),
+		BackgroundTransparency = 1, TextColor3 = SUB, Font = Enum.Font.Code, TextSize = 11,
+		TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top,
+		TextWrapped = true, Text = "",
+	}, card)
+
+	local shown = { hud = false, card = false }
+
+	local function refreshVisibility()
+		local t = S.target
+		local wantHud = t ~= nil and S.targetHud == true
+		local wantCard = t ~= nil and S.profileCard == true
+		if wantHud ~= shown.hud then
+			shown.hud = wantHud
+			animate(hud, hudScale, wantHud)
+		end
+		if wantCard ~= shown.card then
+			shown.card = wantCard
+			animate(card, cardScale, wantCard)
+		end
+	end
+
+	local function loadAvatar(img, userId, thumbType)
+		task.spawn(function()
+			local ok, content = pcall(function()
+				return (Players:GetUserThumbnailAsync(userId, thumbType, Enum.ThumbnailSize.Size150x150))
+			end)
+			if ok and content and img.Parent then img.Image = content end
+		end)
+	end
+
+	function F.setTarget(plr)
+		S.target = plr
+		if plr then
+			nameL.Text = plr.DisplayName
+			userL.Text = "@" .. plr.Name
+			avatar.Image = ""
+			loadAvatar(avatar, plr.UserId, Enum.ThumbnailType.HeadShot)
+
+			cardName.Text = plr.DisplayName .. " (@" .. plr.Name .. ")"
+			cardAvatar.Image = ""
+			loadAvatar(cardAvatar, plr.UserId, Enum.ThumbnailType.AvatarBust)
+			local days = plr.AccountAge
+			local created = os.date("%Y-%m-%d", os.time() - days * 86400)
+			cardInfo.Text = string.format(
+				"User ID:  %d\nAccount age:  %d days (%.1f yrs)\nCreated:  about %s\nMembership:  %s\nTeam:  %s",
+				plr.UserId, days, days / 365, created, plr.MembershipType.Name,
+				plr.Team and plr.Team.Name or "none")
+		end
+		refreshVisibility()
+	end
+
+	function F.targetHud(on)
+		S.targetHud = on
+		if on and not S.target then F.targetNearest() end
+		refreshVisibility()
+	end
+
+	function F.profileCard(on)
+		S.profileCard = on
+		if on and not S.target then F.targetNearest() end
+		refreshVisibility()
+	end
+
+	-- keep the panels live
+	local last = 0
+	bind(RunService.Heartbeat, function()
+		if os.clock() - last < 0.1 then return end
+		last = os.clock()
+		local t = S.target
+		if not t then return end
+		if t.Parent ~= Players then
+			F.setTarget(nil)
+			return
+		end
+		local char = t.Character
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		local root = char and char:FindFirstChild("HumanoidRootPart")
+		if S.targetHud and hum then
+			local frac = math.clamp(hum.Health / math.max(hum.MaxHealth, 1), 0, 1)
+			tween(barFill, {
+				Size = UDim2.new(frac, 0, 1, 0),
+				BackgroundColor3 = Color3.fromHSV(frac * 0.33, 0.8, 1),
+			}, TI.fast)
+			hpL.Text = math.floor(hum.Health) .. " / " .. math.floor(hum.MaxHealth)
+			local me = getRoot()
+			distL.Text = (me and root) and (math.floor((root.Position - me.Position).Magnitude) .. " studs") or "-"
+		end
+	end)
+
+	-- click a player in the world to target them
+	bind(UIS.InputBegan, function(input, processed)
+		if unloaded or processed or not (S.targetHud or S.profileCard) then return end
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+		if UIS:IsKeyDown(Enum.KeyCode.T) or UIS:IsKeyDown(Enum.KeyCode.R) then return end
+		local t = mouse.Target
+		local model = t and t:FindFirstAncestorOfClass("Model")
+		local plr = model and Players:GetPlayerFromCharacter(model)
+		if plr and plr ~= player then F.setTarget(plr) end
+	end)
+end
+
+-- Stopwatch
+do
+	local label = new("TextLabel", {
+		Size = UDim2.new(0, 150, 0, 28),
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 80),
+		BackgroundColor3 = PANEL,
+		BackgroundTransparency = 0.15,
+		Font = Enum.Font.Code,
+		TextSize = 16,
+		Text = "00:00.0",
+		Visible = false,
+	}, UI.gui)
+	corner(label, 6)
+	reg(label, "TextColor3")
+	UI.makeDraggable(label)
+
+	local conn
+	local running, startT, acc = false, 0, 0
+	local function current()
+		return acc + (running and (os.clock() - startT) or 0)
+	end
+
+	function F.stopwatch(on)
+		if conn then conn:Disconnect() conn = nil end
+		label.Visible = on
+		if on then
+			acc, startT, running = 0, os.clock(), true
+			conn = RunService.Heartbeat:Connect(function()
+				local t = current()
+				label.Text = string.format("%02d:%04.1f", math.floor(t / 60), t % 60)
+			end)
+		end
+	end
+
+	function F.stopwatchPause()
+		if running then
+			acc = current()
+			running = false
+		else
+			startT = os.clock()
+			running = true
+		end
+	end
+
+	function F.stopwatchReset()
+		acc, startT = 0, os.clock()
+	end
+end
+
+-- Custom crosshair (size, gap, thickness, color)
+do
+	local frame = new("Frame", {
+		Size = UDim2.new(0, 0, 0, 0),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.new(0.5, 0, 0.5, 0),
+		BackgroundTransparency = 1,
+		Visible = false,
+	}, UI.gui)
+	local bars = {}
+	for i = 1, 4 do
+		bars[i] = new("Frame", { BorderSizePixel = 0, AnchorPoint = Vector2.new(0.5, 0.5) }, frame)
+	end
+	local dot = new("Frame", {
+		BorderSizePixel = 0,
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Size = UDim2.new(0, 3, 0, 3),
+	}, frame)
+	local active = false
+
+	local function apply()
+		local size, gap, th = cfg.chSize, cfg.chGap, cfg.chThick
+		local col = cfg.chHue == 0 and Color3.new(1, 1, 1) or Color3.fromHSV(cfg.chHue / 360, 0.9, 1)
+		local off = gap + size / 2
+		bars[1].Size = UDim2.new(0, th, 0, size)
+		bars[1].Position = UDim2.new(0, 0, 0, -off)
+		bars[2].Size = UDim2.new(0, th, 0, size)
+		bars[2].Position = UDim2.new(0, 0, 0, off)
+		bars[3].Size = UDim2.new(0, size, 0, th)
+		bars[3].Position = UDim2.new(0, -off, 0, 0)
+		bars[4].Size = UDim2.new(0, size, 0, th)
+		bars[4].Position = UDim2.new(0, off, 0, 0)
+		for _, b in ipairs(bars) do b.BackgroundColor3 = col end
+		dot.BackgroundColor3 = col
+	end
+
+	function F.customCrosshair(on)
+		active = on
+		frame.Visible = on
+		if on then apply() end
+	end
+	function F.crosshairUpdate()
+		if active then apply() end
+	end
+end
+
+-- Vignette (dark screen edges)
+do
+	local holder = new("Frame", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Visible = false,
+	}, UI.gui)
+	local gradients = {}
+	local function edge(size, pos, anchor, rotation)
+		local f = new("Frame", {
+			Size = size, Position = pos, AnchorPoint = anchor,
+			BackgroundColor3 = Color3.new(0, 0, 0), BorderSizePixel = 0,
+		}, holder)
+		table.insert(gradients, new("UIGradient", { Rotation = rotation }, f))
+	end
+	edge(UDim2.new(0.25, 0, 1, 0), UDim2.new(0, 0, 0, 0), Vector2.new(0, 0), 0)
+	edge(UDim2.new(0.25, 0, 1, 0), UDim2.new(1, 0, 0, 0), Vector2.new(1, 0), 180)
+	edge(UDim2.new(1, 0, 0.25, 0), UDim2.new(0, 0, 0, 0), Vector2.new(0, 0), 90)
+	edge(UDim2.new(1, 0, 0.25, 0), UDim2.new(0, 0, 1, 0), Vector2.new(0, 1), 270)
+
+	local active = false
+	local function apply()
+		for _, g in ipairs(gradients) do
+			g.Transparency = NumberSequence.new(1 - cfg.vig / 100, 1)
+		end
+	end
+	function F.vignette(on)
+		active = on
+		holder.Visible = on
+		if on then apply() end
+	end
+	function F.vignetteUpdate()
+		if active then apply() end
 	end
 end
 
@@ -2550,6 +3639,7 @@ UI.pages = {}
 UI.currentTab = "Movement"
 UI.menuOpen = false
 UI.menuKey = Enum.KeyCode.RightShift
+UI.shadowEnabled = true
 UI.baseTransp = 0
 UI.uiBase = 1
 UI.autoBase = 1
@@ -2573,6 +3663,7 @@ do
 	}, gui)
 	corner(shadow, 22)
 	local shadowScale = new("UIScale", {}, shadow)
+	UI.shadow = shadow
 
 	-- window (CanvasGroup so the whole thing can fade)
 	local window = new("CanvasGroup", {
@@ -2922,6 +4013,31 @@ do
 
 	minBtn.MouseButton1Click:Connect(function() UI.setMinimized(not UI.minimized) end)
 
+	-- module search (hides module cards that do not match)
+	local search = new("TextBox", {
+		Size = UDim2.new(0, 220, 0, 26),
+		Position = UDim2.new(0, 390, 0, 7),
+		BackgroundColor3 = CARD,
+		TextColor3 = TEXT,
+		PlaceholderText = "search modules...",
+		PlaceholderColor3 = SUB,
+		Font = Enum.Font.Code,
+		TextSize = 13,
+		ClearTextOnFocus = false,
+		Text = "",
+		TextXAlignment = Enum.TextXAlignment.Left,
+	}, titleBar)
+	corner(search, 6)
+	new("UIPadding", { PaddingLeft = UDim.new(0, 8) }, search)
+	search:GetPropertyChangedSignal("Text"):Connect(function()
+		local q = search.Text:lower()
+		for _, m in ipairs(modules) do
+			if m.card then
+				m.card.Visible = q == "" or m.name:lower():find(q, 1, true) ~= nil
+			end
+		end
+	end)
+
 	-- double click the title bar to minimize or restore
 	local lastTitleClick = 0
 	titleBar.InputBegan:Connect(function(input)
@@ -2976,7 +4092,7 @@ do
 		local my = token
 		if on then
 			window.Visible = true
-			shadow.Visible = true
+			shadow.Visible = UI.shadowEnabled
 			uiScale.Scale = UI.uiBase * 0.92
 			tween(uiScale, { Scale = UI.uiBase }, TI.back)
 			tween(window, { GroupTransparency = UI.baseTransp }, TI.slow)
@@ -3122,6 +4238,7 @@ end
 local function addModule(tab, def)
 	local m = { name = def.name, key = def.key, on = false, def = def }
 	local card = makeCard(tab)
+	m.card = card
 
 	local header = new("TextButton", {
 		Size = UDim2.new(1, 0, 0, 36),
@@ -3665,6 +4782,7 @@ do
 			goB.MouseButton1Click:Connect(function() F.goWaypoint(w) end)
 			delB.MouseButton1Click:Connect(function()
 				table.remove(waypoints, i)
+				if F.beaconsRefresh then F.beaconsRefresh() end
 				UI.rebuildWaypoints()
 			end)
 		end
@@ -3905,6 +5023,68 @@ do
 		UI.resetPos()
 		notify("GUI positions reset")
 	end)
+
+	addModule("Settings", {
+		name = "Menu Shadow", desc = "The soft shadow behind the menu window",
+		default = true, noHud = true,
+		onToggle = function(on)
+			UI.shadowEnabled = on
+			if UI.shadow and UI.menuOpen then UI.shadow.Visible = on end
+		end,
+	})
+
+	addModule("Settings", {
+		name = "Team Check", desc = "ESP, tracers, radar and targeting skip your teammates",
+		onToggle = function(on)
+			S.teamCheck = on
+			F.espRefresh()
+		end,
+	})
+	addModule("Settings", {
+		name = "Screenshot Mode", key = Enum.KeyCode.F7,
+		desc = "Hides the whole menu and every HUD. Press F7 again to bring it back",
+		noHud = true,
+		onToggle = function(on) UI.gui.Enabled = not on end,
+	})
+
+	do
+		local function preset(names)
+			for _, m in ipairs(modules) do
+				for _, n in ipairs(names) do
+					if m.name == n and not m.on then setModule(m, true, true) end
+				end
+			end
+			notify("Preset loaded")
+		end
+
+		local card = makeCard("Settings")
+		makeTitle(card, "Presets (turn on a group of modules)")
+		local row = new("Frame", {
+			Size = UDim2.new(1, 0, 0, 30),
+			BackgroundTransparency = 1,
+			LayoutOrder = nextOrder(),
+		}, card)
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6) }, row)
+
+		local function presetBtn(text, names)
+			local b = new("TextButton", {
+				Size = UDim2.new(1 / 3, -4, 1, 0),
+				BackgroundColor3 = OFFCOL,
+				TextColor3 = TEXT,
+				Font = Enum.Font.GothamBold,
+				TextSize = 12,
+				Text = text,
+				AutoButtonColor = false,
+			}, row)
+			corner(b, 6)
+			hover(b, OFFCOL, Color3.fromRGB(80, 88, 106))
+			pressFx(b)
+			b.MouseButton1Click:Connect(function() preset(names) end)
+		end
+		presetBtn("Explorer", { "Fly", "Noclip", "Radar", "Compass", "Anti Void" })
+		presetBtn("Cinematic", { "Cinematic Bars", "Motion Blur", "Bloom Glow", "Sun Rays", "Hide Topbar" })
+		presetBtn("Performance", { "Super FPS", "FPS Counter", "No Particles", "No Shadows" })
+	end
 
 	addButton("Settings", "Unload Client", function()
 		unloaded = true
@@ -4243,6 +5423,254 @@ addModule("Visuals", {
 })
 
 -- =====================================================
+-- MENU CONTENT: COSMETICS
+-- =====================================================
+do
+	addModule("Visuals", { name = "Headless", desc = "Hides your head (only you see it)", reapply = true, onToggle = F.headless })
+	addModule("Visuals", { name = "Korblox", desc = "Korblox right leg, R15 only (only you see it)", reapply = true, onToggle = F.korblox })
+	addModule("Visuals", { name = "Hide Accessories", desc = "Hides your hats and accessories", reapply = true, onToggle = F.hideAccessories })
+	addModule("Visuals", { name = "Neon Body", desc = "Makes your body glow", reapply = true, onToggle = F.neonBody })
+	addModule("Visuals", { name = "Forcefield Skin", desc = "Forcefield look on your body", reapply = true, onToggle = F.forcefieldBody })
+	addModule("Visuals", {
+		name = "Body Color", desc = "Paint your whole body one color",
+		reapply = true,
+		onToggle = F.bodyColor,
+		sliders = { { label = "Body hue", min = 0, max = 360, default = 120,
+			onChange = function(v) cfg.bodyHue = v F.bodyColorUpdate() end } },
+	})
+
+	addModule("Movement", { name = "Stat Lock", desc = "Stops the game from resetting your speed and jump", onToggle = F.statLock })
+
+	addModule("Misc", { name = "Hide Topbar", desc = "Hides the Roblox top bar", onToggle = F.hideTopbar })
+	addButton("Misc", "Equip Next Tool", F.equipNextTool)
+	addButton("Misc", "Unequip Tools", F.unequipTools)
+end
+
+-- =====================================================
+-- MENU CONTENT: RADAR, BEACONS, MOTION BLUR
+-- =====================================================
+do
+	addModule("Visuals", {
+		name = "Radar", desc = "Minimap that shows nearby players",
+		onToggle = F.radar,
+		sliders = {
+			{ label = "Radar range", min = 50, max = 1000, default = 200,
+				onChange = function(v) cfg.radarRange = v end },
+			{ label = "Radar size", min = 100, max = 260, default = 170,
+				onChange = function(v) cfg.radarSize = v end },
+		},
+	})
+	addModule("Visuals", {
+		name = "Waypoint Beacons", desc = "Glowing beams and distances at your saved waypoints",
+		onToggle = F.beacons,
+	})
+	addModule("Visuals", {
+		name = "Motion Blur", desc = "Blurs the screen when you turn or move fast",
+		onToggle = F.motionBlur,
+		sliders = {
+			{ label = "Blur strength", min = 5, max = 100, default = 50,
+				onChange = function(v) cfg.mblur = v end },
+			{ label = "Blur max", min = 5, max = 40, default = 20,
+				onChange = function(v) cfg.mblurMax = v end },
+		},
+	})
+
+	addButton("Teleport", "Drop Beacon Here", function()
+		F.saveWaypoint()
+		for _, m in ipairs(modules) do
+			if m.name == "Waypoint Beacons" and not m.on then setModule(m, true, true) end
+		end
+	end)
+end
+
+-- =====================================================
+-- MENU CONTENT: TARGET, ESP UPGRADES, SKY, ANIMATIONS
+-- =====================================================
+do
+	addModule("Visuals", { name = "Target HUD", desc = "Click a player to see their health, distance and name", onToggle = F.targetHud })
+	addModule("Visuals", { name = "Profile Card", desc = "Click a player to see their ID, account age and avatar", onToggle = F.profileCard })
+	addModule("Visuals", {
+		name = "ESP Boxes", desc = "Draws a box around players (turn ESP on too)",
+		onToggle = function(on) S.espBoxes = on F.espRefresh() end,
+	})
+	addModule("Visuals", {
+		name = "ESP Health Bars", desc = "A health bar beside each player (turn ESP on too)",
+		onToggle = function(on) S.espHealth = on F.espRefresh() end,
+	})
+	addModule("Visuals", {
+		name = "Team Colors", desc = "Players show in their team color on ESP and the radar",
+		onToggle = function(on) S.teamColors = on F.espRefresh() end,
+	})
+
+	addModule("World", {
+		name = "Sky Color", desc = "Recolors the sky and horizon",
+		onToggle = F.skyColor,
+		sliders = {
+			{ label = "Sky hue", min = 0, max = 360, default = 210,
+				onChange = function(v) cfg.skyHue = v F.skyUpdate() end },
+			{ label = "Horizon hue", min = 0, max = 360, default = 20,
+				onChange = function(v) cfg.horizonHue = v F.skyUpdate() end },
+			{ label = "Sky saturation", min = 0, max = 100, default = 60,
+				onChange = function(v) cfg.skySat = v F.skyUpdate() end },
+			{ label = "Sky density", min = 0, max = 100, default = 35,
+				onChange = function(v) cfg.skyDensity = v F.skyUpdate() end },
+		},
+	})
+
+	-- Players tab: target buttons
+	do
+		local card = makeCard("Players")
+		card.LayoutOrder = 2
+		makeTitle(card, "Target (for Target HUD and Profile Card)")
+		local row = new("Frame", {
+			Size = UDim2.new(1, 0, 0, 30),
+			BackgroundTransparency = 1,
+			LayoutOrder = nextOrder(),
+		}, card)
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6) }, row)
+		local function btn(text, fn)
+			local b = new("TextButton", {
+				Size = UDim2.new(1 / 3, -4, 1, 0),
+				BackgroundColor3 = OFFCOL,
+				TextColor3 = TEXT,
+				Font = Enum.Font.GothamBold,
+				TextSize = 12,
+				Text = text,
+				AutoButtonColor = false,
+			}, row)
+			corner(b, 6)
+			hover(b, OFFCOL, Color3.fromRGB(80, 88, 106))
+			pressFx(b)
+			b.MouseButton1Click:Connect(fn)
+		end
+		btn("Nearest", F.targetNearest)
+		btn("Random", function()
+			local choices = {}
+			for _, plr in ipairs(Players:GetPlayers()) do
+				if plr ~= player then table.insert(choices, plr) end
+			end
+			if #choices > 0 then F.setTarget(choices[math.random(1, #choices)]) else notify("No players found", false) end
+		end)
+		btn("Clear", function() F.setTarget(nil) end)
+	end
+
+	-- Misc tab: animation player
+	do
+		local card = makeCard("Misc")
+		makeTitle(card, "Animation player (R15)")
+		local box = makeTextRow(card, "animation ID (numbers only)")
+
+		local row = new("Frame", {
+			Size = UDim2.new(1, 0, 0, 30),
+			BackgroundTransparency = 1,
+			LayoutOrder = nextOrder(),
+		}, card)
+		new("UIListLayout", { FillDirection = Enum.FillDirection.Horizontal, Padding = UDim.new(0, 6) }, row)
+
+		local function rowBtn(parent, text, widthScale, fn)
+			local b = new("TextButton", {
+				Size = UDim2.new(widthScale, -4, 1, 0),
+				BackgroundColor3 = OFFCOL,
+				TextColor3 = TEXT,
+				Font = Enum.Font.GothamBold,
+				TextSize = 12,
+				Text = text,
+				AutoButtonColor = false,
+			}, parent)
+			corner(b, 6)
+			hover(b, OFFCOL, Color3.fromRGB(80, 88, 106))
+			pressFx(b)
+			b.MouseButton1Click:Connect(fn)
+			return b
+		end
+		rowBtn(row, "Play", 0.5, function() F.playAnim(box.Text) end)
+		rowBtn(row, "Stop", 0.5, function() F.stopAnim() end)
+
+		makeSlider(card, "Animation speed", 10, 300, 100, function(v)
+			cfg.animSpeed = v
+			F.animSpeedUpdate()
+		end)
+
+		local grid = new("Frame", {
+			Size = UDim2.new(1, 0, 0, 0),
+			AutomaticSize = Enum.AutomaticSize.Y,
+			BackgroundTransparency = 1,
+			LayoutOrder = nextOrder(),
+		}, card)
+		new("UIGridLayout", {
+			CellSize = UDim2.new(1 / 3, -6, 0, 28),
+			CellPadding = UDim2.new(0, 6, 0, 6),
+			SortOrder = Enum.SortOrder.LayoutOrder,
+		}, grid)
+		local emotes = {
+			{ "Wave", 507770239 }, { "Point", 507770453 }, { "Cheer", 507770677 },
+			{ "Laugh", 507770818 }, { "Dance", 507771019 }, { "Dance 2", 507776043 },
+			{ "Dance 3", 507777268 },
+		}
+		for i, e in ipairs(emotes) do
+			local b = rowBtn(grid, e[1], 1 / 3, function() F.playAnim(e[2]) end)
+			b.Size = UDim2.new(1 / 3, -6, 0, 28)
+			b.LayoutOrder = i
+		end
+	end
+end
+
+-- =====================================================
+-- MENU CONTENT: QUICK EXTRAS
+-- =====================================================
+do
+	addModule("Visuals", { name = "Grayscale", desc = "Turns the whole screen black and white", onToggle = F.grayscale })
+	addModule("Visuals", { name = "Part Highlighter", desc = "Outlines whatever your mouse is over", onToggle = F.partHighlighter })
+	addModule("Visuals", {
+		name = "Custom Crosshair", desc = "Your own crosshair with adjustable size and color",
+		onToggle = F.customCrosshair,
+		sliders = {
+			{ label = "Crosshair size", min = 2, max = 40, default = 10,
+				onChange = function(v) cfg.chSize = v F.crosshairUpdate() end },
+			{ label = "Crosshair gap", min = 0, max = 20, default = 4,
+				onChange = function(v) cfg.chGap = v F.crosshairUpdate() end },
+			{ label = "Crosshair thickness", min = 1, max = 8, default = 2,
+				onChange = function(v) cfg.chThick = v F.crosshairUpdate() end },
+			{ label = "Crosshair color (0 = white)", min = 0, max = 360, default = 0,
+				onChange = function(v) cfg.chHue = v F.crosshairUpdate() end },
+		},
+	})
+
+	addModule("Misc", { name = "Stopwatch", desc = "A timer on screen that starts when you turn it on", onToggle = F.stopwatch })
+	addButton("Misc", "Stopwatch: Pause / Resume", F.stopwatchPause)
+	addButton("Misc", "Stopwatch: Reset", F.stopwatchReset)
+end
+
+-- =====================================================
+-- MENU CONTENT: MORE QUICK EXTRAS
+-- =====================================================
+do
+	addModule("Visuals", {
+		name = "Vignette", desc = "Darkens the edges of your screen",
+		onToggle = F.vignette,
+		sliders = { { label = "Vignette strength", min = 10, max = 100, default = 60,
+			onChange = function(v) cfg.vig = v F.vignetteUpdate() end } },
+	})
+	addModule("Visuals", {
+		name = "Camera Effects", desc = "Camera shake and tilt",
+		onToggle = F.camFx,
+		sliders = {
+			{ label = "Camera shake", min = 0, max = 100, default = 20,
+				onChange = function(v) cfg.shake = v end },
+			{ label = "Camera tilt", min = -45, max = 45, default = 0,
+				onChange = function(v) cfg.tilt = v end },
+		},
+	})
+	addModule("Visuals", {
+		name = "FOV Kick", desc = "The view widens when you move fast",
+		onToggle = F.fovKick,
+		sliders = { { label = "Kick amount", min = 0, max = 60, default = 15,
+			onChange = function(v) cfg.kick = v end } },
+	})
+	addModule("Teleport", { name = "Death Marker", desc = "Saves a waypoint where you die", onToggle = F.deathMarker })
+end
+
+-- =====================================================
 -- MENU CONTENT: CONSOLE
 -- =====================================================
 do
@@ -4466,6 +5894,34 @@ do
 	cmds.back = function()
 		F.goBack()
 		cprint("went back", accent)
+	end
+
+	cmds.target = function(args)
+		local plr = findPlayer(args[1])
+		if not plr then
+			cprint("player not found", RED)
+			return
+		end
+		F.setTarget(plr)
+		for _, m in ipairs(modules) do
+			if m.name == "Target HUD" and not m.on then setModule(m, true, true) end
+		end
+		cprint("targeting " .. plr.Name, accent)
+	end
+
+	cmds.untarget = function()
+		F.setTarget(nil)
+		cprint("target cleared", accent)
+	end
+
+	cmds.anim = function(args)
+		F.playAnim(args[1] or "")
+		cprint("animation requested", accent)
+	end
+
+	cmds.stopanim = function()
+		F.stopAnim()
+		cprint("animation stopped", accent)
 	end
 
 	local function run(text)
